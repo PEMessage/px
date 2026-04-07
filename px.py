@@ -24,11 +24,13 @@ from typing import Optional, Type
 # Data Models
 # =============================================================================
 
+
 @dataclass(frozen=True)
 class Proxy:
     """Proxy configuration data model - only scheme and url_prefix"""
-    scheme: str         # http, https, socks5h
-    url_prefix: str     # http://, socks5h://
+
+    scheme: str  # http, https, socks5h
+    url_prefix: str  # http://, socks5h://
 
     def full_url(self, host: str, port: str) -> str:
         return f"{self.url_prefix}{host}:{port}"
@@ -37,6 +39,7 @@ class Proxy:
 @dataclass
 class ProxyList:
     """Proxy list"""
+
     proxies: list[Proxy]
     host: str = ""
     port: str = ""
@@ -50,34 +53,38 @@ class ProxyList:
 
 
 # Default proxy definitions
-DEFAULT_PROXIES = ProxyList([
-    Proxy("http", "http://"),
-    Proxy("https", "http://"),
-    Proxy("socks5h", "socks5h://"),
-])
+DEFAULT_PROXIES = ProxyList(
+    [
+        Proxy("http", "http://"),
+        Proxy("https", "http://"),
+        Proxy("socks5h", "socks5h://"),
+    ]
+)
 
 
 # =============================================================================
 # Output Modes
 # =============================================================================
 
+
 class Mode(ABC):
     """
     Abstract base class for output modes
-    
+
     Subclasses implement:
         - _eval_set / _eval_unset: eval subcommand implementation
         - _echo_set / _echo_unset: echo subcommand implementation
-    
+
     Optional:
         - get_parser(): returns sub-parser (for mode-specific args like service, mode)
-    
+
     Base class dispatch:
         - eval(action) -> calls _eval_set or _eval_unset
         - echo(action) -> calls _echo_set or _echo_unset
-        
+
     Returns string (may contain newlines), each Mode formats itself
     """
+
     NAME: str = ""
     SUPPORTED_SCHEMES: set[str] = set()
 
@@ -148,6 +155,7 @@ class Mode(ABC):
 
 class ShellMode(Mode):
     """Shell environment variable mode - sets both lowercase and uppercase vars"""
+
     NAME = "shell"
     SUPPORTED_SCHEMES = {"http", "https", "socks5h"}
 
@@ -190,6 +198,7 @@ class ShellMode(Mode):
 
 class NpmMode(ShellMode):
     """NPM environment variable mode - inherits ShellMode, only overrides VAR_MAP"""
+
     NAME = "npm"
     SUPPORTED_SCHEMES = {"http", "https"}
 
@@ -202,6 +211,7 @@ class NpmMode(ShellMode):
 
 class GradleMode(Mode):
     """Gradle configuration mode"""
+
     NAME = "gradle"
     SUPPORTED_SCHEMES = {"http", "https", "socks5h"}
 
@@ -232,6 +242,7 @@ class GradleMode(Mode):
 
 class SystemdMode(Mode):
     """Systemd service configuration mode"""
+
     NAME = "systemd"
     SUPPORTED_SCHEMES = {"http", "https", "socks5h"}
 
@@ -260,11 +271,20 @@ class SystemdMode(Mode):
     @classmethod
     def get_parser(cls) -> argparse.ArgumentParser:
         """Systemd-specific argument parser"""
-        parser = argparse.ArgumentParser(prog='px -m systemd', add_help=False)
-        parser.add_argument("service", nargs="?", default="docker.service",
-                          help="Service name (default: docker.service)")
-        parser.add_argument("mode", nargs="?", choices=["system", "user"], default="system",
-                          help="Systemd mode: system or user (default: system)")
+        parser = argparse.ArgumentParser(prog="px -m systemd", add_help=False)
+        parser.add_argument(
+            "service",
+            nargs="?",
+            default="docker.service",
+            help="Service name (default: docker.service)",
+        )
+        parser.add_argument(
+            "mode",
+            nargs="?",
+            choices=["system", "user"],
+            default="system",
+            help="Systemd mode: system or user (default: system)",
+        )
         return parser
 
     def _eval_set(self) -> str:
@@ -283,11 +303,15 @@ class SystemdMode(Mode):
                 url = proxy.full_url(self.proxy_list.host, self.proxy_list.port)
                 var_names = self.VAR_MAP.get(proxy.scheme, ())
                 for var_name in var_names:
-                    lines.append(f'echo \'Environment="{var_name}={url}"\' | sudo tee -a /run/systemd/system/{self.service}.d/override.conf')
+                    lines.append(
+                        f"echo 'Environment=\"{var_name}={url}\"' | sudo tee -a /run/systemd/system/{self.service}.d/override.conf"
+                    )
         else:
             # user mode
             lines.append(f"mkdir -p $HOME/.config/systemd/user/{self.service}.d")
-            lines.append(f"$EDITOR $HOME/.config/systemd/user/{self.service}.d/override.conf")
+            lines.append(
+                f"$EDITOR $HOME/.config/systemd/user/{self.service}.d/override.conf"
+            )
             lines.append("[Service]")
 
             for proxy in self.active_proxies("set"):
@@ -303,7 +327,9 @@ class SystemdMode(Mode):
             for proxy in self.active_proxies("unset"):
                 var_names = self.VAR_MAP.get(proxy.scheme, ())
                 for var_name in var_names:
-                    lines.append(f'sudo sed -i \'/Environment="{var_name}=/d\' /run/systemd/system/{self.service}.d/override.conf')
+                    lines.append(
+                        f"sudo sed -i '/Environment=\"{var_name}=/d' /run/systemd/system/{self.service}.d/override.conf"
+                    )
         return "\n".join(lines)
 
 
@@ -320,10 +346,13 @@ MODES: dict[str, Type[Mode]] = {
 # WSL Detection
 # =============================================================================
 
+
 def detect_wsl_ip() -> Optional[str]:
     """Detect WSL2 host IP"""
     try:
-        r = subprocess.run(["wslinfo", "--networking-mode"], capture_output=True, text=True, timeout=2)
+        r = subprocess.run(
+            ["wslinfo", "--networking-mode"], capture_output=True, text=True, timeout=2
+        )
         if r.returncode == 0 and r.stdout.strip() == "mirrored":
             return "localhost"
     except:
@@ -332,7 +361,9 @@ def detect_wsl_ip() -> Optional[str]:
     try:
         r = subprocess.run(["uname", "-a"], capture_output=True, text=True, timeout=2)
         if "wsl2" in r.stdout.lower():
-            r = subprocess.run(["ip", "route", "show"], capture_output=True, text=True, timeout=2)
+            r = subprocess.run(
+                ["ip", "route", "show"], capture_output=True, text=True, timeout=2
+            )
             for line in r.stdout.split("\n"):
                 if "default" in line:
                     parts = line.split()
@@ -348,8 +379,10 @@ def detect_wsl_ip() -> Optional[str]:
 # CLI
 # =============================================================================
 
+
 class HelpOnErrorParser(argparse.ArgumentParser):
     """Custom ArgumentParser that returns exit 2 for help instead of 0"""
+
     def print_help(self, file=None):
         super().print_help(file)
         sys.exit(2)  # Non-zero exit code prevents shell wrapper from eval
@@ -357,31 +390,33 @@ class HelpOnErrorParser(argparse.ArgumentParser):
     def error(self, message):
         # Also exit 2 on error
         self.print_usage(sys.stderr)
-        self.exit(2, f'{self.prog}: error: {message}\n')
+        self.exit(2, f"{self.prog}: error: {message}\n")
 
 
-def parse_mode_args(mode_class: Type[Mode], extra_args: list[str]) -> tuple[list[str], bool]:
+def parse_mode_args(
+    mode_class: Type[Mode], extra_args: list[str]
+) -> tuple[list[str], bool]:
     """
     Parse mode-specific arguments
-    
+
     Returns: (parsed args list, whether help was shown)
     """
     parser = mode_class.get_parser()
     if parser is None:
         return extra_args, False
-    
+
     # Check for -h or --help
-    if '-h' in extra_args or '--help' in extra_args:
+    if "-h" in extra_args or "--help" in extra_args:
         parser.print_help()
         return [], True
-    
+
     try:
         args = parser.parse_args(extra_args)
         # Flatten parsed args to list
         result = []
-        if hasattr(args, 'service'):
+        if hasattr(args, "service"):
             result.append(args.service)
-        if hasattr(args, 'mode'):
+        if hasattr(args, "mode"):
             result.append(args.mode)
         return result, False
     except SystemExit:
@@ -389,20 +424,53 @@ def parse_mode_args(mode_class: Type[Mode], extra_args: list[str]) -> tuple[list
         return extra_args, False
 
 
+# Alias map: short option -> expansion list
+ALIAS_MAP = {
+    "-g": ["--mode", "gradle"],
+    "-n": ["--mode", "npm"],
+    "-s": ["--mode", "systemd"],
+}
+
+
+def expand_aliases(argv: list[str]) -> list[str]:
+    """Expand aliases in argv before parsing."""
+    result = [argv[0]]  # Keep script name
+    for arg in argv[1:]:
+        if arg in ALIAS_MAP:
+            result.extend(ALIAS_MAP[arg])
+        else:
+            result.append(arg)
+    return result
+
+
 def main():
+    # Expand aliases before parsing
+    sys.argv = expand_aliases(sys.argv)
+
     # Normal full argument parsing
-    parser = HelpOnErrorParser(description="Proxy environment variable tool")
-    parser.add_argument("cmd", choices=["eval", "echo"], help="Subcommand: eval or echo")
+    alias_help = "aliases:\n" + "\n".join(
+        f"  {alias} = {' '.join(expansion)}" for alias, expansion in ALIAS_MAP.items()
+    )
+    parser = HelpOnErrorParser(
+        description="Proxy environment variable tool",
+        epilog=alias_help,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "cmd", choices=["eval", "echo"], help="Subcommand: eval or echo"
+    )
     parser.add_argument("-a", "--action", choices=["set", "unset"], required=True)
     parser.add_argument("-m", "--mode", choices=list(MODES.keys()), default="shell")
     parser.add_argument("-i", "--ip", help="Proxy server IP (auto-detect if not set)")
-    parser.add_argument("-p", "--port", default="7890", help="Proxy port (default: 7890)")
+    parser.add_argument(
+        "-p", "--port", default="7890", help="Proxy port (default: 7890)"
+    )
 
     args, extra = parser.parse_known_args()
-    
+
     # Get selected mode class (user may have specified different one via -m)
     mode_class = MODES[args.mode]
-    
+
     # If mode has sub-parser, parse its specific args
     if mode_class.get_parser():
         extra, showed_help = parse_mode_args(mode_class, extra)
