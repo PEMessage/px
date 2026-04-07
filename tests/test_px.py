@@ -36,18 +36,26 @@ class TestCLI(unittest.TestCase):
         return result
 
     def test_eval_set(self):
-        """测试 eval set 命令"""
+        """测试 eval set 命令 - 应该同时输出大小写变量"""
         result = self.run_px("eval", "-a", "set")
         self.assertEqual(result.returncode, 0)
-        self.assertIn("export http_proxy", result.stdout)
-        self.assertIn("export HTTP_PROXY", result.stdout)
+        # 检查同时有小写和大写
+        self.assertIn("export http_proxy=", result.stdout)
+        self.assertIn("export HTTP_PROXY=", result.stdout)
+        self.assertIn("export https_proxy=", result.stdout)
+        self.assertIn("export HTTPS_PROXY=", result.stdout)
+        self.assertIn("export socks5h_proxy=", result.stdout)
+        self.assertIn("export SOCKS5H_PROXY=", result.stdout)
         self.assertIn("localhost:7890", result.stdout)
 
     def test_eval_unset(self):
-        """测试 eval unset 命令"""
+        """测试 eval unset 命令 - 应该同时取消大小写变量"""
         result = self.run_px("eval", "-a", "unset")
         self.assertEqual(result.returncode, 0)
         self.assertIn("unset http_proxy", result.stdout)
+        self.assertIn("unset HTTP_PROXY", result.stdout)
+        self.assertIn("unset https_proxy", result.stdout)
+        self.assertIn("unset HTTPS_PROXY", result.stdout)
 
     def test_echo_gradle(self):
         """测试 echo gradle 模式"""
@@ -68,6 +76,9 @@ class TestCLI(unittest.TestCase):
         result = self.run_px("eval", "-a", "set", "-m", "npm")
         self.assertEqual(result.returncode, 0)
         self.assertIn("npm_config_proxy", result.stdout)
+        self.assertIn("npm_config_https_proxy", result.stdout)
+        # npm 不设置大写变量
+        self.assertNotIn("NPM_CONFIG_PROXY", result.stdout)
 
     def test_echo_systemd_default(self):
         """测试 echo systemd 默认模式"""
@@ -75,6 +86,9 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("docker.service", result.stdout)
         self.assertIn("systemctl daemon-reload", result.stdout)
+        # 检查同时有小写和大写
+        self.assertIn("http_proxy=", result.stdout)
+        self.assertIn("HTTP_PROXY=", result.stdout)
 
     def test_echo_systemd_user(self):
         """测试 echo systemd user 模式"""
@@ -112,7 +126,7 @@ class TestShellWrapper(unittest.TestCase):
         cls.px_sh_path = cls.project_dir / "px.sh"
 
     def test_wrapper_set_proxy(self):
-        """测试包装层设置代理"""
+        """测试包装层设置代理 - 检查大小写变量"""
         px_file = self.project_dir / "px"
         script = f"""
 export PX_CMD={px_file}
@@ -124,9 +138,17 @@ unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY 2>/dev/null
 # 测试设置代理
 px
 
-# 检查是否设置了变量
+# 检查同时设置了小写和大写变量
 if [[ -z "$http_proxy" ]]; then
     echo "FAIL: http_proxy not set"
+    exit 1
+fi
+if [[ -z "$HTTP_PROXY" ]]; then
+    echo "FAIL: HTTP_PROXY not set"
+    exit 1
+fi
+if [[ "$http_proxy" != "$HTTP_PROXY" ]]; then
+    echo "FAIL: http_proxy and HTTP_PROXY should be equal"
     exit 1
 fi
 if [[ "$http_proxy" != *":7890"* ]]; then
@@ -150,26 +172,36 @@ echo "SUCCESS"
             os.unlink(tmp_script)
 
     def test_wrapper_unset_proxy(self):
-        """测试包装层取消代理"""
+        """测试包装层取消代理 - 检查同时取消大小写变量"""
         px_file = self.project_dir / "px"
         script = f"""
 export PX_CMD={px_file}
 source {self.px_sh_path}
 
-# 先设置代理
+# 先设置代理（大小写都设置）
 export http_proxy="http://test:7890"
+export HTTP_PROXY="http://test:7890"
 export https_proxy="http://test:7890"
+export HTTPS_PROXY="http://test:7890"
 
 # 测试取消代理
 unpx
 
-# 检查是否取消了变量
+# 检查同时取消了大小写变量
 if [[ -n "$http_proxy" ]]; then
     echo "FAIL: http_proxy still set: $http_proxy"
     exit 1
 fi
+if [[ -n "$HTTP_PROXY" ]]; then
+    echo "FAIL: HTTP_PROXY still set: $HTTP_PROXY"
+    exit 1
+fi
 if [[ -n "$https_proxy" ]]; then
     echo "FAIL: https_proxy still set"
+    exit 1
+fi
+if [[ -n "$HTTPS_PROXY" ]]; then
+    echo "FAIL: HTTPS_PROXY still set"
     exit 1
 fi
 
@@ -196,7 +228,7 @@ export PX_CMD={px_file}
 source {self.px_sh_path}
 
 # 清除现有代理
-unset http_proxy 2>/dev/null
+unset http_proxy HTTP_PROXY 2>/dev/null
 
 # 测试 gradle 模式（应该只输出，不设置环境变量）
 output=$(px -m gradle)
@@ -210,6 +242,10 @@ fi
 # 检查没有设置 http_proxy
 if [[ -n "$http_proxy" ]]; then
     echo "FAIL: http_proxy should not be set in gradle mode"
+    exit 1
+fi
+if [[ -n "$HTTP_PROXY" ]]; then
+    echo "FAIL: HTTP_PROXY should not be set in gradle mode"
     exit 1
 fi
 
@@ -244,6 +280,10 @@ px -m npm
 # 检查是否设置了变量
 if [[ -z "$npm_config_proxy" ]]; then
     echo "FAIL: npm_config_proxy not set"
+    exit 1
+fi
+if [[ -z "$npm_config_https_proxy" ]]; then
+    echo "FAIL: npm_config_https_proxy not set"
     exit 1
 fi
 
@@ -297,8 +337,6 @@ fi
             result = subprocess.run(
                 ["bash", tmp_script], capture_output=True, text=True
             )
-            # 注意：这里的测试期望脚本返回非零（因为我们故意让它失败）
-            # 但我们检查的是错误处理逻辑是否正确
             self.assertIn("SUCCESS", result.stdout)
         finally:
             os.unlink(tmp_script)

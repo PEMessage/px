@@ -2,90 +2,10 @@
 """
 px - 代理环境变量设置工具
 
-一个 Pythonic 的代理环境变量管理工具，支持多种输出模式。
-
-## 架构
-
-- **Data Model**: `Proxy` (frozen dataclass) + `ProxyList`
-- **Mode ABC**: 统一接口 `eval()` / `echo()`
-- **Exit Code**: 所有模式统一返回 exit 0
-
-## 子命令
-
-- `eval`: 生成需要 `eval` 执行的命令（修改 shell 环境）
-- `echo`: 生成直接输出的内容（配置、注释等）
-
-## 支持的模式
-
-| Mode | eval 输出 | echo 输出 | 说明 |
-|------|-----------|-----------|------|
-| shell | export/unset | 警告注释 | 标准 shell 环境变量 |
-| npm | export/unset npm_config_* | 空 | npm 专用变量 |
-| gradle | 空 | gradle.properties 格式 | Gradle 配置 |
-| systemd | 空 | systemd override.conf 格式 | Systemd 服务配置 |
-
-## 使用方法
-
-### 基本用法
-
-```bash
-# 设置代理（自动检测 WSL2 IP）
-px eval -a set
-
-# 取消代理
-px eval -a unset
-
-# Gradle 配置
-px echo -a set -m gradle
-
-# npm 代理
-px eval -a set -m npm
-
-# Systemd 配置（默认 docker.service, system 模式）
-px echo -a set -m systemd
-
-# Systemd 自定义服务
-px echo -a set -m systemd myapp user
-```
-
-### 参数
-
-- `-a, --action`: `set` 或 `unset`
-- `-m, --mode`: `shell`, `gradle`, `npm`, `systemd`（默认: shell）
-- `-i, --ip`: 代理服务器 IP（未设置则自动检测 WSL2）
-- `-p, --port`: 代理端口（默认: 7890）
-
-## 配合 Shell 使用
-
-```bash
-# 加载包装函数
-source px.sh
-
-# 设置代理（自动检测 IP）
-px
-
-# 查看当前代理
-pxshow
-
-# 取消代理
-unpx
-
-# 其他模式
-px -m gradle
-px -m npm
-px -m systemd myapp user
-```
-
-## 安装
-
-```bash
-# 1. 克隆或下载到 PATH 目录
-cp px_real.py ~/.local/bin/px
-cp px.sh ~/.config/shell/
-
-# 2. 添加到你的 shell 配置
-source ~/.config/shell/px.sh
-```
+架构:
+    - Proxy: 仅保留 scheme 和 url_prefix
+    - 各 Mode 自己管理变量名映射
+    - ShellMode: 同时设置小写和大写变量名
 """
 
 from __future__ import annotations
@@ -104,31 +24,20 @@ from typing import Iterable, Optional, Type
 
 @dataclass(frozen=True)
 class Proxy:
-    """单个代理配置的数据模型"""
-    name: str           # 如 'http_proxy'
-    scheme: str         # 如 'http', 'https', 'socks5h'
-    url_prefix: str     # 如 'http://', 'socks5h://'
-    aliases: tuple[str, ...] = ()  # 大小写变体
+    """代理配置数据模型 - 仅保留 scheme 和 url_prefix"""
+    scheme: str         # http, https, socks5h
+    url_prefix: str     # http://, socks5h://
 
     def full_url(self, host: str, port: str) -> str:
         return f"{self.url_prefix}{host}:{port}"
 
-    def all_names(self) -> list[str]:
-        return [self.name, *self.aliases]
-
 
 @dataclass
 class ProxyList:
-    """代理列表，管理一组 Proxy 及其当前值"""
+    """代理列表"""
     proxies: list[Proxy]
     host: str = ""
     port: str = ""
-
-    def __post_init__(self):
-        self._by_scheme: dict[str, Proxy] = {p.scheme: p for p in self.proxies}
-
-    def get(self, scheme: str) -> Optional[Proxy]:
-        return self._by_scheme.get(scheme)
 
     def active(self, action: str) -> list[Proxy]:
         if action == "unset":
@@ -138,10 +47,11 @@ class ProxyList:
         return []
 
 
+# 默认代理定义
 DEFAULT_PROXIES = ProxyList([
-    Proxy("http_proxy", "http", "http://", ("HTTP_PROXY",)),
-    Proxy("https_proxy", "https", "http://", ("HTTPS_PROXY",)),
-    Proxy("socks5h_proxy", "socks5h", "socks5h://", ("SOCKS5H_PROXY",)),
+    Proxy("http", "http://"),
+    Proxy("https", "http://"),
+    Proxy("socks5h", "socks5h://"),
 ])
 
 
@@ -163,38 +73,49 @@ class Mode(ABC):
         """子类可以重写此方法进行初始化"""
         pass
 
-    def supports(self, proxy: Proxy) -> bool:
-        return proxy.scheme in self.SUPPORTED_SCHEMES
+    def supports(self, scheme: str) -> bool:
+        return scheme in self.SUPPORTED_SCHEMES
 
     def active_proxies(self, action: str) -> list[Proxy]:
-        return [p for p in self.proxy_list.active(action) if self.supports(p)]
+        return [p for p in self.proxy_list.active(action) if self.supports(p.scheme)]
 
     @abstractmethod
     def eval(self, action: str) -> list[str]:
-        """生成需要 eval 执行的命令（修改 shell 环境），返回空列表表示无"""
+        """生成需要 eval 执行的命令"""
         return []
 
     @abstractmethod
     def echo(self, action: str) -> list[str]:
-        """生成直接输出的内容（配置、注释等）"""
+        """生成直接输出的内容"""
         return []
 
 
 class ShellMode(Mode):
-    """Shell 环境变量模式"""
+    """Shell 环境变量模式 - 同时设置小写和大写变量"""
     NAME = "shell"
     SUPPORTED_SCHEMES = {"http", "https", "socks5h"}
+
+    # 变量名映射: scheme -> (小写变量名, 大写变量名)
+    VAR_MAP = {
+        "http": ("http_proxy", "HTTP_PROXY"),
+        "https": ("https_proxy", "HTTPS_PROXY"),
+        "socks5h": ("socks5h_proxy", "SOCKS5H_PROXY"),
+    }
 
     def eval(self, action: str) -> list[str]:
         lines = []
         for proxy in self.active_proxies(action):
+            var_names = self.VAR_MAP.get(proxy.scheme)
+            if not var_names:
+                continue
+
             if action == "set":
                 url = proxy.full_url(self.proxy_list.host, self.proxy_list.port)
-                for name in proxy.all_names():
-                    lines.append(f'export {name}="{url}"')
+                for var_name in var_names:
+                    lines.append(f'export {var_name}="{url}"')
             else:
-                for name in proxy.all_names():
-                    lines.append(f"unset {name}")
+                for var_name in var_names:
+                    lines.append(f"unset {var_name}")
         return lines
 
     def echo(self, action: str) -> list[str]:
@@ -226,19 +147,24 @@ class NpmMode(Mode):
     NAME = "npm"
     SUPPORTED_SCHEMES = {"http", "https"}
 
-    NPM_VARS = {"http": "npm_config_proxy", "https": "npm_config_https_proxy"}
+    # 变量名映射: scheme -> 变量名
+    VAR_MAP = {
+        "http": "npm_config_proxy",
+        "https": "npm_config_https_proxy",
+    }
 
     def eval(self, action: str) -> list[str]:
         lines = []
         for proxy in self.active_proxies(action):
-            var = self.NPM_VARS.get(proxy.scheme)
-            if not var:
+            var_name = self.VAR_MAP.get(proxy.scheme)
+            if not var_name:
                 continue
+
             if action == "set":
                 url = proxy.full_url(self.proxy_list.host, self.proxy_list.port)
-                lines.append(f'export {var}="{url}"')
+                lines.append(f'export {var_name}="{url}"')
             else:
-                lines.append(f"unset {var}")
+                lines.append(f"unset {var_name}")
         return lines
 
     def echo(self, action: str) -> list[str]:
@@ -249,6 +175,13 @@ class SystemdMode(Mode):
     """Systemd 服务配置模式"""
     NAME = "systemd"
     SUPPORTED_SCHEMES = {"http", "https", "socks5h"}
+
+    # 变量名映射: scheme -> (小写变量名, 大写变量名)
+    VAR_MAP = {
+        "http": ("http_proxy", "HTTP_PROXY"),
+        "https": ("https_proxy", "HTTPS_PROXY"),
+        "socks5h": ("socks5h_proxy", "SOCKS5H_PROXY"),
+    }
 
     def _post_init(self):
         # 从 extra_args 解析 service 和 mode
@@ -282,8 +215,9 @@ class SystemdMode(Mode):
 
                 for proxy in self.active_proxies(action):
                     url = proxy.full_url(self.proxy_list.host, self.proxy_list.port)
-                    for name in proxy.all_names():
-                        lines.append(f'# echo \'Environment="{name}={url}"\' | sudo tee -a /run/systemd/system/{self.service}.d/override.conf')
+                    var_names = self.VAR_MAP.get(proxy.scheme, ())
+                    for var_name in var_names:
+                        lines.append(f'# echo \'Environment="{var_name}={url}"\' | sudo tee -a /run/systemd/system/{self.service}.d/override.conf')
             else:
                 # user mode
                 lines.append(f"# mkdir -p $HOME/.config/systemd/user/{self.service}.d")
@@ -292,14 +226,16 @@ class SystemdMode(Mode):
 
                 for proxy in self.active_proxies(action):
                     url = proxy.full_url(self.proxy_list.host, self.proxy_list.port)
-                    for name in proxy.all_names():
-                        lines.append(f'Environment="{name}={url}"')
+                    var_names = self.VAR_MAP.get(proxy.scheme, ())
+                    for var_name in var_names:
+                        lines.append(f'Environment="{var_name}={url}"')
         else:
             # unset
             if self.mode == "system":
                 for proxy in self.active_proxies(action):
-                    for name in proxy.all_names():
-                        lines.append(f'# sudo sed -i \'/Environment="{name}=/d\' /run/systemd/system/{self.service}.d/override.conf')
+                    var_names = self.VAR_MAP.get(proxy.scheme, ())
+                    for var_name in var_names:
+                        lines.append(f'# sudo sed -i \'/Environment="{var_name}=/d\' /run/systemd/system/{self.service}.d/override.conf')
 
         return lines
 
