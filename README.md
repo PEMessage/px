@@ -146,6 +146,37 @@ class Mode(ABC):
 - **mirrored 模式**: `wslinfo --networking-mode` 返回 `mirrored`，使用 `localhost`
 - **传统模式**: 从 `ip route` 获取默认网关 IP
 
+## 测试
+
+```bash
+# 运行测试
+python3 tests/test_px.py
+
+# 详细输出
+python3 tests/test_px.py -v
+```
+
+测试覆盖:
+- Data Model 和 Modes
+- CLI 接口
+- Shell 包装层（包括错误处理）
+
+## 安全机制
+
+Shell 包装层 (`px.sh`) 有严格的安全检查:
+
+- 捕获 px 输出并检查 exit code
+- 只有 exit 0 时才执行 `eval`
+- 非零 exit code 时输出错误信息并保留 exit code
+
+```bash
+# 正常情况
+px          # 成功，eval 执行
+
+# px 失败时
+px          # 失败，显示错误，不执行 eval
+```
+
 ## License
 
 MIT
