@@ -6,6 +6,10 @@
 #     - eval: 生成需要 eval 执行的命令（修改 shell 环境）
 #     - echo: 生成直接输出的内容（配置、注释等）
 #
+#   安全机制:
+#     - 只有 px 返回 exit 0 时才执行 eval
+#     - 否则输出错误信息，保留 exit code
+#
 # 使用方法:
 #   source px.sh       # 加载函数
 #   px                 # 自动检测 IP，设置代理
@@ -18,11 +22,26 @@
 _px() {
     local mode="${1:-shell}"
     shift
+    local eval_output
+    local exit_code
 
-    # eval 子命令 (修改 shell 环境的命令)
-    eval "$($PX_CMD eval -m "$mode" "$@")" 2>/dev/null
+    # 捕获 eval 输出和 exit code
+    eval_output="$($PX_CMD eval -m "$mode" "$@" 2>&1)"
+    exit_code=$?
 
-    # echo 子命令 (配置、注释等直接输出)
+    # 检查 exit code，非 0 则不 eval
+    if ((exit_code != 0)); then
+        echo "px error (exit $exit_code):" >&2
+        echo "$eval_output" >&2
+        return $exit_code
+    fi
+
+    # exit 0 时执行 eval
+    if [[ -n "$eval_output" ]]; then
+        eval "$eval_output"
+    fi
+
+    # 执行 echo 子命令（直接输出配置）
     $PX_CMD echo -m "$mode" "$@"
 }
 
