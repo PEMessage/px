@@ -66,10 +66,12 @@ class TestCLI(unittest.TestCase):
         self.assertIn("systemProp.https.proxyPort", result.stdout)
 
     def test_echo_npm(self):
-        """测试 echo npm 模式"""
+        """测试 echo npm 模式 - 继承 ShellMode，echo 与 eval 输出相同"""
         result = self.run_px("echo", "-a", "set", "-m", "npm")
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), "")  # npm echo 为空
+        # NpmMode 继承 ShellMode，echo 输出与 eval 相同
+        self.assertIn("npm_config_proxy", result.stdout)
+        self.assertIn("npm_config_https_proxy", result.stdout)
 
     def test_eval_npm(self):
         """测试 eval npm 模式"""

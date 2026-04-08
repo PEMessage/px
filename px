@@ -167,12 +167,12 @@ class ShellMode(Mode):
         return "\n".join(lines)
 
     def _echo_set(self) -> str:
-        if not (self.proxy_list.host and self.proxy_list.port):
-            return "# 警告: 未配置代理服务器地址"
-        return ""
+        """echo set 输出与 eval set 相同，方便用户预览"""
+        return self._eval_set()
 
     def _echo_unset(self) -> str:
-        return ""
+        """echo unset 输出与 eval unset 相同"""
+        return self._eval_unset()
 
 
 class NpmMode(ShellMode):
