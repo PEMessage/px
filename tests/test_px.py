@@ -100,9 +100,9 @@ class TestCLI(unittest.TestCase):
         self.assertIn(".config/systemd/user", result.stdout)
         self.assertIn("[Service]", result.stdout)
 
-    def test_echo_systemd_comma_format(self):
-        """测试 echo systemd 逗号格式"""
-        result = self.run_px("echo", "-a", "set", "-m", "systemd", "myapp,user")
+    def test_echo_systemd_positional_args(self):
+        """测试 echo systemd 位置参数格式"""
+        result = self.run_px("echo", "-a", "set", "-m", "systemd", "myapp", "user")
         self.assertEqual(result.returncode, 0)
         self.assertIn("myapp", result.stdout)
         self.assertIn("[Service]", result.stdout)

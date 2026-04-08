@@ -7,6 +7,7 @@ px - 代理环境变量设置工具
     - 各 Mode 自己管理变量名映射
     - 基类统一 dispatch set/unset 到独立方法
     - 接口返回 str 而非 list[str]，各 Mode 自己格式化
+    - Mode 可有子参数解析（如 systemd 的 service 和 mode）
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import subprocess
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Type
+from typing import Optional, Type, Sequence
 
 
 # =============================================================================
@@ -68,6 +69,9 @@ class Mode(ABC):
         - _eval_set / _eval_unset: eval 子命令的具体实现
         - _echo_set / _echo_unset: echo 子命令的具体实现
     
+    可选:
+        - get_parser(): 返回子参数解析器（用于 mode 特有参数如 service, mode）
+    
     基类 dispatch:
         - eval(action) -> 调用 _eval_set 或 _eval_unset
         - echo(action) -> 调用 _echo_set 或 _echo_unset
@@ -85,6 +89,15 @@ class Mode(ABC):
     def _post_init(self):
         """子类可以重写此方法进行初始化"""
         pass
+
+    @classmethod
+    def get_parser(cls) -> Optional[argparse.ArgumentParser]:
+        """
+        可选: 返回子参数解析器
+        用于 mode 特有参数（如 systemd 的 service 和 mode）
+        返回 None 表示不需要子参数
+        """
+        return None
 
     def supports(self, scheme: str) -> bool:
         return scheme in self.SUPPORTED_SCHEMES
@@ -229,24 +242,30 @@ class SystemdMode(Mode):
         "socks5h": ("socks5h_proxy", "SOCKS5H_PROXY"),
     }
 
+    def __init__(self, proxy_list: ProxyList, extra_args: list[str]):
+        # 先调用父类初始化
+        super().__init__(proxy_list, extra_args)
+
     def _post_init(self):
-        # 从 extra_args 解析 service 和 mode
-        self.service = ""
-        self.mode = "system"  # 默认 system 模式
+        """解析 service 和 mode"""
+        self.service = "docker.service"
+        self.mode = "system"  # system 或 user
 
         for arg in self.extra_args:
-            if "," in arg:
-                parts = arg.split(",")
-                self.service = parts[0]
-                if len(parts) > 1:
-                    self.mode = parts[1]
-            elif arg in ("system", "user"):
+            if arg in ("system", "user"):
                 self.mode = arg
             else:
                 self.service = arg
 
-        if not self.service:
-            self.service = "docker.service"
+    @classmethod
+    def get_parser(cls) -> argparse.ArgumentParser:
+        """Systemd 特有参数解析器"""
+        parser = argparse.ArgumentParser(prog='px -m systemd', add_help=False)
+        parser.add_argument("service", nargs="?", default="docker.service",
+                          help="服务名称 (默认: docker.service)")
+        parser.add_argument("mode", nargs="?", choices=["system", "user"], default="system",
+                          help="systemd 模式: system 或 user (默认: system)")
+        return parser
 
     def _eval_set(self) -> str:
         return ""
@@ -341,7 +360,53 @@ class HelpOnErrorParser(argparse.ArgumentParser):
         self.exit(2, f'{self.prog}: error: {message}\n')
 
 
+def parse_mode_args(mode_class: Type[Mode], extra_args: list[str]) -> tuple[list[str], bool]:
+    """
+    解析 mode 特有参数
+    
+    返回: (解析后的参数列表, 是否显示了 help)
+    """
+    parser = mode_class.get_parser()
+    if parser is None:
+        return extra_args, False
+    
+    # 检查是否有 -h 或 --help
+    if '-h' in extra_args or '--help' in extra_args:
+        parser.print_help()
+        return [], True
+    
+    try:
+        args = parser.parse_args(extra_args)
+        # 将解析后的参数展平为列表
+        result = []
+        if hasattr(args, 'service'):
+            result.append(args.service)
+        if hasattr(args, 'mode'):
+            result.append(args.mode)
+        return result, False
+    except SystemExit:
+        # 解析失败，返回原始参数
+        return extra_args, False
+
+
 def main():
+    # 先只解析 mode，避免 -h 被立即处理
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("-m", "--mode", choices=list(MODES.keys()), default="shell")
+    
+    # 分离出 mode 参数和剩余参数
+    pre_args, remaining = pre_parser.parse_known_args()
+    mode_class = MODES[pre_args.mode]
+    
+    # 检查是否是 mode 特有 help
+    if '-h' in remaining or '--help' in remaining:
+        mode_parser = mode_class.get_parser()
+        if mode_parser:
+            # 显示 mode 特有 help
+            mode_parser.print_help()
+            sys.exit(2)
+    
+    # 正常解析所有参数
     parser = HelpOnErrorParser(description="代理环境变量设置工具")
     parser.add_argument("cmd", choices=["eval", "echo"], help="子命令: eval 或 echo")
     parser.add_argument("-a", "--action", choices=["set", "unset"], required=True)
@@ -350,6 +415,15 @@ def main():
     parser.add_argument("-p", "--port", default="7890", help="代理端口 (默认: 7890)")
 
     args, extra = parser.parse_known_args()
+    
+    # 获取选中的 mode 类（可能用户通过 -m 指定了不同的）
+    mode_class = MODES[args.mode]
+    
+    # 如果 mode 有子参数解析器，解析其特有参数
+    if mode_class.get_parser():
+        extra, showed_help = parse_mode_args(mode_class, extra)
+        if showed_help:
+            sys.exit(2)  # help 显示后退出，非零 exit code
 
     # IP 未设置则自动检测
     host = args.ip
@@ -367,7 +441,7 @@ def main():
     proxies = ProxyList(list(DEFAULT_PROXIES.proxies), host, args.port)
 
     # 创建 Mode
-    mode = MODES[args.mode](proxies, extra)
+    mode = mode_class(proxies, extra)
 
     # 执行子命令 - dispatch 在 Mode 基类中完成
     if args.cmd == "eval":
