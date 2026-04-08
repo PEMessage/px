@@ -190,7 +190,14 @@ class NpmMode(ShellMode):
 class GradleMode(Mode):
     """Gradle 配置模式"""
     NAME = "gradle"
-    SUPPORTED_SCHEMES = {"http", "https"}
+    SUPPORTED_SCHEMES = {"http", "https", "socks5h"}
+
+    # scheme 映射: 将 socks5h 映射为 gradle 使用的 "sock"
+    GRADLE_SCHEME_MAP = {
+        "http": "http",
+        "https": "https",
+        "socks5h": "sock",
+    }
 
     def _eval_set(self) -> str:
         return ""
@@ -201,8 +208,9 @@ class GradleMode(Mode):
     def _echo_set(self) -> str:
         lines = ["# 将以下内容添加到 gradle.properties:"]
         for proxy in self.active_proxies("set"):
-            lines.append(f"systemProp.{proxy.scheme}.proxyHost={self.proxy_list.host}")
-            lines.append(f"systemProp.{proxy.scheme}.proxyPort={self.proxy_list.port}")
+            gradle_scheme = self.GRADLE_SCHEME_MAP.get(proxy.scheme, proxy.scheme)
+            lines.append(f"systemProp.{gradle_scheme}.proxyHost={self.proxy_list.host}")
+            lines.append(f"systemProp.{gradle_scheme}.proxyPort={self.proxy_list.port}")
         return "\n".join(lines)
 
     def _echo_unset(self) -> str:
