@@ -6,6 +6,7 @@ px - 代理环境变量设置工具
     - Proxy: 仅保留 scheme 和 url_prefix
     - 各 Mode 自己管理变量名映射
     - 基类统一 dispatch set/unset 到独立方法
+    - 接口返回 str 而非 list[str]，各 Mode 自己格式化
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import subprocess
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Iterable, Optional, Type
+from typing import Optional, Type
 
 
 # =============================================================================
@@ -70,6 +71,8 @@ class Mode(ABC):
     基类 dispatch:
         - eval(action) -> 调用 _eval_set 或 _eval_unset
         - echo(action) -> 调用 _echo_set 或 _echo_unset
+        
+    返回字符串（可包含多行），各 Mode 自己格式化
     """
     NAME: str = ""
     SUPPORTED_SCHEMES: set[str] = set()
@@ -92,14 +95,14 @@ class Mode(ABC):
     # -------------------------------------------------------------------------
     # Dispatch methods
     # -------------------------------------------------------------------------
-    def eval(self, action: str) -> list[str]:
+    def eval(self, action: str) -> str:
         """生成需要 eval 执行的命令 - dispatch 到具体方法"""
         if action == "set":
             return self._eval_set()
         else:  # unset
             return self._eval_unset()
 
-    def echo(self, action: str) -> list[str]:
+    def echo(self, action: str) -> str:
         """生成直接输出的内容 - dispatch 到具体方法"""
         if action == "set":
             return self._echo_set()
@@ -110,24 +113,24 @@ class Mode(ABC):
     # Abstract methods for subclasses to implement
     # -------------------------------------------------------------------------
     @abstractmethod
-    def _eval_set(self) -> list[str]:
+    def _eval_set(self) -> str:
         """eval set 的具体实现"""
-        return []
+        return ""
 
     @abstractmethod
-    def _eval_unset(self) -> list[str]:
+    def _eval_unset(self) -> str:
         """eval unset 的具体实现"""
-        return []
+        return ""
 
     @abstractmethod
-    def _echo_set(self) -> list[str]:
+    def _echo_set(self) -> str:
         """echo set 的具体实现"""
-        return []
+        return ""
 
     @abstractmethod
-    def _echo_unset(self) -> list[str]:
+    def _echo_unset(self) -> str:
         """echo unset 的具体实现"""
-        return []
+        return ""
 
 
 class ShellMode(Mode):
@@ -142,7 +145,7 @@ class ShellMode(Mode):
         "socks5h": ("socks5h_proxy", "SOCKS5H_PROXY"),
     }
 
-    def _eval_set(self) -> list[str]:
+    def _eval_set(self) -> str:
         lines = []
         for proxy in self.active_proxies("set"):
             var_names = self.VAR_MAP.get(proxy.scheme)
@@ -151,9 +154,9 @@ class ShellMode(Mode):
             url = proxy.full_url(self.proxy_list.host, self.proxy_list.port)
             for var_name in var_names:
                 lines.append(f'export {var_name}="{url}"')
-        return lines
+        return "\n".join(lines)
 
-    def _eval_unset(self) -> list[str]:
+    def _eval_unset(self) -> str:
         lines = []
         for proxy in self.active_proxies("unset"):
             var_names = self.VAR_MAP.get(proxy.scheme)
@@ -161,15 +164,27 @@ class ShellMode(Mode):
                 continue
             for var_name in var_names:
                 lines.append(f"unset {var_name}")
-        return lines
+        return "\n".join(lines)
 
-    def _echo_set(self) -> list[str]:
+    def _echo_set(self) -> str:
         if not (self.proxy_list.host and self.proxy_list.port):
-            return ["# 警告: 未配置代理服务器地址"]
-        return []
+            return "# 警告: 未配置代理服务器地址"
+        return ""
 
-    def _echo_unset(self) -> list[str]:
-        return []
+    def _echo_unset(self) -> str:
+        return ""
+
+
+class NpmMode(ShellMode):
+    """NPM 环境变量模式 - 继承 ShellMode，只覆盖 VAR_MAP"""
+    NAME = "npm"
+    SUPPORTED_SCHEMES = {"http", "https"}
+
+    # 覆盖父类的 VAR_MAP (使用 tuple 单元素保持接口一致)
+    VAR_MAP = {
+        "http": ("npm_config_proxy",),
+        "https": ("npm_config_https_proxy",),
+    }
 
 
 class GradleMode(Mode):
@@ -177,58 +192,21 @@ class GradleMode(Mode):
     NAME = "gradle"
     SUPPORTED_SCHEMES = {"http", "https"}
 
-    def _eval_set(self) -> list[str]:
-        return []
+    def _eval_set(self) -> str:
+        return ""
 
-    def _eval_unset(self) -> list[str]:
-        return []
+    def _eval_unset(self) -> str:
+        return ""
 
-    def _echo_set(self) -> list[str]:
+    def _echo_set(self) -> str:
         lines = ["# 将以下内容添加到 gradle.properties:"]
         for proxy in self.active_proxies("set"):
             lines.append(f"systemProp.{proxy.scheme}.proxyHost={self.proxy_list.host}")
             lines.append(f"systemProp.{proxy.scheme}.proxyPort={self.proxy_list.port}")
-        return lines
+        return "\n".join(lines)
 
-    def _echo_unset(self) -> list[str]:
-        return []
-
-
-class NpmMode(Mode):
-    """NPM 环境变量模式"""
-    NAME = "npm"
-    SUPPORTED_SCHEMES = {"http", "https"}
-
-    # 变量名映射: scheme -> 变量名
-    VAR_MAP = {
-        "http": "npm_config_proxy",
-        "https": "npm_config_https_proxy",
-    }
-
-    def _eval_set(self) -> list[str]:
-        lines = []
-        for proxy in self.active_proxies("set"):
-            var_name = self.VAR_MAP.get(proxy.scheme)
-            if not var_name:
-                continue
-            url = proxy.full_url(self.proxy_list.host, self.proxy_list.port)
-            lines.append(f'export {var_name}="{url}"')
-        return lines
-
-    def _eval_unset(self) -> list[str]:
-        lines = []
-        for proxy in self.active_proxies("unset"):
-            var_name = self.VAR_MAP.get(proxy.scheme)
-            if not var_name:
-                continue
-            lines.append(f"unset {var_name}")
-        return lines
-
-    def _echo_set(self) -> list[str]:
-        return []
-
-    def _echo_unset(self) -> list[str]:
-        return []
+    def _echo_unset(self) -> str:
+        return ""
 
 
 class SystemdMode(Mode):
@@ -262,13 +240,13 @@ class SystemdMode(Mode):
         if not self.service:
             self.service = "docker.service"
 
-    def _eval_set(self) -> list[str]:
-        return []
+    def _eval_set(self) -> str:
+        return ""
 
-    def _eval_unset(self) -> list[str]:
-        return []
+    def _eval_unset(self) -> str:
+        return ""
 
-    def _echo_set(self) -> list[str]:
+    def _echo_set(self) -> str:
         lines = []
         if self.mode == "system":
             lines.append(f"# sudo systemctl daemon-reload")
@@ -290,16 +268,16 @@ class SystemdMode(Mode):
                 var_names = self.VAR_MAP.get(proxy.scheme, ())
                 for var_name in var_names:
                     lines.append(f'Environment="{var_name}={url}"')
-        return lines
+        return "\n".join(lines)
 
-    def _echo_unset(self) -> list[str]:
+    def _echo_unset(self) -> str:
         lines = []
         if self.mode == "system":
             for proxy in self.active_proxies("unset"):
                 var_names = self.VAR_MAP.get(proxy.scheme, ())
                 for var_name in var_names:
                     lines.append(f'# sudo sed -i \'/Environment="{var_name}=/d\' /run/systemd/system/{self.service}.d/override.conf')
-        return lines
+        return "\n".join(lines)
 
 
 # =============================================================================
@@ -373,12 +351,13 @@ def main():
 
     # 执行子命令 - dispatch 在 Mode 基类中完成
     if args.cmd == "eval":
-        lines = mode.eval(args.action)
+        output = mode.eval(args.action)
     else:  # echo
-        lines = mode.echo(args.action)
+        output = mode.echo(args.action)
 
-    for line in lines:
-        print(line)
+    # 输出结果（可能是多行字符串）
+    if output:
+        print(output)
 
 
 if __name__ == "__main__":
