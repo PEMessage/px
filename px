@@ -276,18 +276,18 @@ class SystemdMode(Mode):
     def _echo_set(self) -> str:
         lines = []
         if self.mode == "system":
-            lines.append(f"# sudo systemctl daemon-reload")
-            lines.append(f"# sudo systemctl restart {self.service}")
+            lines.append(f"sudo systemctl daemon-reload")
+            lines.append(f"sudo systemctl restart {self.service}")
 
             for proxy in self.active_proxies("set"):
                 url = proxy.full_url(self.proxy_list.host, self.proxy_list.port)
                 var_names = self.VAR_MAP.get(proxy.scheme, ())
                 for var_name in var_names:
-                    lines.append(f'# echo \'Environment="{var_name}={url}"\' | sudo tee -a /run/systemd/system/{self.service}.d/override.conf')
+                    lines.append(f'echo \'Environment="{var_name}={url}"\' | sudo tee -a /run/systemd/system/{self.service}.d/override.conf')
         else:
             # user mode
-            lines.append(f"# mkdir -p $HOME/.config/systemd/user/{self.service}.d")
-            lines.append(f"# 编辑: $HOME/.config/systemd/user/{self.service}.d/override.conf")
+            lines.append(f"mkdir -p $HOME/.config/systemd/user/{self.service}.d")
+            lines.append(f"$EDITOR $HOME/.config/systemd/user/{self.service}.d/override.conf")
             lines.append("[Service]")
 
             for proxy in self.active_proxies("set"):
@@ -303,7 +303,7 @@ class SystemdMode(Mode):
             for proxy in self.active_proxies("unset"):
                 var_names = self.VAR_MAP.get(proxy.scheme, ())
                 for var_name in var_names:
-                    lines.append(f'# sudo sed -i \'/Environment="{var_name}=/d\' /run/systemd/system/{self.service}.d/override.conf')
+                    lines.append(f'sudo sed -i \'/Environment="{var_name}=/d\' /run/systemd/system/{self.service}.d/override.conf')
         return "\n".join(lines)
 
 
