@@ -390,22 +390,6 @@ def parse_mode_args(mode_class: Type[Mode], extra_args: list[str]) -> tuple[list
 
 
 def main():
-    # First parse only mode, avoiding immediate -h handling
-    pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("-m", "--mode", choices=list(MODES.keys()), default="shell")
-    
-    # Separate mode args from remaining
-    pre_args, remaining = pre_parser.parse_known_args()
-    mode_class = MODES[pre_args.mode]
-    
-    # Check if it's mode-specific help
-    if '-h' in remaining or '--help' in remaining:
-        mode_parser = mode_class.get_parser()
-        if mode_parser:
-            # Show mode-specific help
-            mode_parser.print_help()
-            sys.exit(2)
-    
     # Normal full argument parsing
     parser = HelpOnErrorParser(description="Proxy environment variable tool")
     parser.add_argument("cmd", choices=["eval", "echo"], help="Subcommand: eval or echo")

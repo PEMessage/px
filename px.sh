@@ -16,18 +16,15 @@
 #   unpx               # Unset proxy
 
 # Config: px script path (overridable via environment variable)
-: ${PX_CMD:=$(dirname $0)/px}
 
 # Core: call px to execute eval and echo
 _px() {
-    local mode="${1:-shell}"
-    shift
     local eval_output
     local exit_code
 
     # Capture eval output and exit code
-    local PX_CMD="$(dirname $0)/px}"
-    eval_output="$($PX_CMD eval -m "$mode" "$@" 2>&1)"
+    local PX_CMD="px.py"
+    eval_output="$("$PX_CMD" eval "$@" 2>&1)"
     exit_code=$?
 
     # Check exit code, don't eval if non-zero
@@ -43,14 +40,9 @@ _px() {
     fi
 
     # Execute echo subcommand (display configs)
-    $PX_CMD echo -m "$mode" "$@"
+    "$PX_CMD" echo "$@"
 }
 
 # Command definitions
 px()   { _px shell -a set "$@"; }
 unpx() { _px shell -a unset "$@"; }
-
-# Show current proxy settings
-pxshow() {
-    env | grep -iE '(_proxy|npm_config)=' | sort || echo "(no proxy settings)"
-}
