@@ -23,7 +23,15 @@ _px() {
     local exit_code
 
     # Capture eval output and exit code
-    local PX_CMD="px.py"
+    # Use PX_CMD from environment if set, otherwise use px.py relative to this script
+    local PX_CMD="${PX_CMD:-}"
+    if [[ -z "$PX_CMD" ]]; then
+        if [[ -f "$(dirname "${BASH_SOURCE[0]}")/px.py" ]]; then
+            PX_CMD="$(dirname "${BASH_SOURCE[0]}")/px.py"
+        else
+            PX_CMD="px.py"
+        fi
+    fi
     eval_output="$("$PX_CMD" eval "$@" 2>&1)"
     exit_code=$?
 

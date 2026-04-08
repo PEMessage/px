@@ -25,7 +25,7 @@ class TestCLI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.project_dir = Path(__file__).parent.parent
-        cls.px_path = cls.project_dir / "px"
+        cls.px_path = cls.project_dir / "px.py"
         cls.px_sh_path = cls.project_dir / "px.sh"
 
     def run_px(self, *args):
@@ -129,7 +129,7 @@ class TestShellWrapper(unittest.TestCase):
 
     def test_wrapper_set_proxy(self):
         """Test wrapper set proxy - check both lowercase and uppercase vars"""
-        px_file = self.project_dir / "px"
+        px_file = self.project_dir / "px.py"
         script = f"""
 export PX_CMD={px_file}
 source {self.px_sh_path}
@@ -175,7 +175,7 @@ echo "SUCCESS"
 
     def test_wrapper_unset_proxy(self):
         """Test wrapper unset proxy - check both lowercase and uppercase vars are unset"""
-        px_file = self.project_dir / "px"
+        px_file = self.project_dir / "px.py"
         script = f"""
 export PX_CMD={px_file}
 source {self.px_sh_path}
@@ -224,7 +224,7 @@ echo "SUCCESS"
 
     def test_wrapper_gradle_mode(self):
         """Test wrapper gradle mode (display only, no eval)"""
-        px_file = self.project_dir / "px"
+        px_file = self.project_dir / "px.py"
         script = f"""
 export PX_CMD={px_file}
 source {self.px_sh_path}
@@ -268,7 +268,7 @@ echo "SUCCESS"
 
     def test_wrapper_npm_mode(self):
         """Test wrapper npm mode"""
-        px_file = self.project_dir / "px"
+        px_file = self.project_dir / "px.py"
         script = f"""
 export PX_CMD={px_file}
 source {self.px_sh_path}
@@ -317,8 +317,10 @@ echo "SUCCESS"
         os.chmod(fake_px.name, 0o755)
 
         script = f"""
-export PX_CMD={fake_px.name}
 source {self.px_sh_path}
+
+# Override PX_CMD to use fake script
+PX_CMD="{fake_px.name}"
 
 # Try to execute (should return non-zero)
 px 2>/dev/null
