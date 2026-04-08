@@ -25,12 +25,15 @@ _px() {
     # Capture eval output and exit code
     # Use PX_CMD from environment if set, otherwise use px.py relative to this script
     local PX_CMD="${PX_CMD:-px.py}"
+    if ! command -v "$PX_CMD" > /dev/null ; then
+        echo "$PX_CMD not found"
+        return 1
+    fi
     eval_output="$("$PX_CMD" eval "$@" 2>&1)"
     exit_code=$?
 
     # Check exit code, don't eval if non-zero
     if ((exit_code != 0)); then
-        echo "px error (exit $exit_code):" >&2
         echo "$eval_output" >&2
         return $exit_code
     fi
