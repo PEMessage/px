@@ -118,6 +118,64 @@ class TestCLI(unittest.TestCase):
         result = self.run_px("eval", "-a", "unset")
         self.assertEqual(result.returncode, 0)
 
+    def test_openai_credential_long(self):
+        """Test openai mode with --credential"""
+        result = self.run_px(
+            "eval", "-a", "set", "-m", "openai", "--credential", "testkey123"
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("OPENAI_API_BASE=", result.stdout)
+        self.assertIn('OPENAI_API_KEY="testkey123"', result.stdout)
+
+    def test_openai_credential_short(self):
+        """Test openai mode with -c"""
+        result = self.run_px("eval", "-a", "set", "-m", "openai", "-c", "shortkey")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn('OPENAI_API_KEY="shortkey"', result.stdout)
+
+    def test_openai_credential_aliases(self):
+        """Test all credential aliases work correctly"""
+        aliases = [
+            ("-k", "keyalias"),
+            ("--key", "keyalias2"),
+            ("-t", "tokenalias"),
+            ("--token", "tokenalias2"),
+        ]
+        for flag, value in aliases:
+            result = self.run_px("eval", "-a", "set", "-m", "openai", flag, value)
+            self.assertEqual(result.returncode, 0)
+            self.assertIn(f'OPENAI_API_KEY="{value}"', result.stdout)
+
+    def test_openai_no_credential(self):
+        """Test openai mode without credential - should only set base URL"""
+        result = self.run_px("eval", "-a", "set", "-m", "openai")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("OPENAI_API_BASE=", result.stdout)
+        self.assertNotIn("OPENAI_API_KEY", result.stdout)
+
+    def test_anthropic_credential(self):
+        """Test anthropic mode with credential"""
+        result = self.run_px(
+            "eval", "-a", "set", "-m", "anthropic", "--credential", "anthropic_key"
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("ANTHROPIC_API_BASE=", result.stdout)
+        self.assertIn('ANTHROPIC_API_KEY="anthropic_key"', result.stdout)
+
+    def test_host_option_with_port(self):
+        """Test -H option with ip:port format"""
+        result = self.run_px("eval", "-a", "set", "-H", "192.168.1.50:3128")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("http://192.168.1.50:3128", result.stdout)
+
+    def test_host_option_without_port(self):
+        """Test -H option with just ip (no port)"""
+        result = self.run_px("eval", "-a", "set", "-H", "localhost")
+        self.assertEqual(result.returncode, 0)
+        # Without port, URL should not have :port suffix
+        self.assertIn('http://localhost"', result.stdout)
+        self.assertNotIn("http://localhost:7890", result.stdout)
+
 
 class TestShellWrapper(unittest.TestCase):
     """Test shell wrapper"""
