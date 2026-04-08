@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-px - 代理环境变量设置工具
+px - Proxy Environment Variable Tool
 
-架构:
-    - Proxy: 仅保留 scheme 和 url_prefix
-    - 各 Mode 自己管理变量名映射
-    - 基类统一 dispatch set/unset 到独立方法
-    - 接口返回 str 而非 list[str]，各 Mode 自己格式化
-    - Mode 可有子参数解析（如 systemd 的 service 和 mode）
+Architecture:
+    - Proxy: scheme and url_prefix only
+    - Each Mode manages its own variable name mapping
+    - Base class dispatches set/unset to separate methods
+    - Interface returns str (not list[str]), each Mode formats itself
+    - Mode can have sub-parser (e.g., systemd service and mode)
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import subprocess
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Type, Sequence
+from typing import Optional, Type
 
 
 # =============================================================================
@@ -26,7 +26,7 @@ from typing import Optional, Type, Sequence
 
 @dataclass(frozen=True)
 class Proxy:
-    """代理配置数据模型 - 仅保留 scheme 和 url_prefix"""
+    """Proxy configuration data model - only scheme and url_prefix"""
     scheme: str         # http, https, socks5h
     url_prefix: str     # http://, socks5h://
 
@@ -36,7 +36,7 @@ class Proxy:
 
 @dataclass
 class ProxyList:
-    """代理列表"""
+    """Proxy list"""
     proxies: list[Proxy]
     host: str = ""
     port: str = ""
@@ -49,7 +49,7 @@ class ProxyList:
         return []
 
 
-# 默认代理定义
+# Default proxy definitions
 DEFAULT_PROXIES = ProxyList([
     Proxy("http", "http://"),
     Proxy("https", "http://"),
@@ -63,20 +63,20 @@ DEFAULT_PROXIES = ProxyList([
 
 class Mode(ABC):
     """
-    输出模式的抽象基类
+    Abstract base class for output modes
     
-    子类实现:
-        - _eval_set / _eval_unset: eval 子命令的具体实现
-        - _echo_set / _echo_unset: echo 子命令的具体实现
+    Subclasses implement:
+        - _eval_set / _eval_unset: eval subcommand implementation
+        - _echo_set / _echo_unset: echo subcommand implementation
     
-    可选:
-        - get_parser(): 返回子参数解析器（用于 mode 特有参数如 service, mode）
+    Optional:
+        - get_parser(): returns sub-parser (for mode-specific args like service, mode)
     
-    基类 dispatch:
-        - eval(action) -> 调用 _eval_set 或 _eval_unset
-        - echo(action) -> 调用 _echo_set 或 _echo_unset
+    Base class dispatch:
+        - eval(action) -> calls _eval_set or _eval_unset
+        - echo(action) -> calls _echo_set or _echo_unset
         
-    返回字符串（可包含多行），各 Mode 自己格式化
+    Returns string (may contain newlines), each Mode formats itself
     """
     NAME: str = ""
     SUPPORTED_SCHEMES: set[str] = set()
@@ -87,15 +87,15 @@ class Mode(ABC):
         self._post_init()
 
     def _post_init(self):
-        """子类可以重写此方法进行初始化"""
+        """Subclasses can override this for initialization"""
         pass
 
     @classmethod
     def get_parser(cls) -> Optional[argparse.ArgumentParser]:
         """
-        可选: 返回子参数解析器
-        用于 mode 特有参数（如 systemd 的 service 和 mode）
-        返回 None 表示不需要子参数
+        Optional: returns sub-parser
+        Used for mode-specific args (e.g., systemd's service and mode)
+        Returns None if no sub-args needed
         """
         return None
 
@@ -109,14 +109,14 @@ class Mode(ABC):
     # Dispatch methods
     # -------------------------------------------------------------------------
     def eval(self, action: str) -> str:
-        """生成需要 eval 执行的命令 - dispatch 到具体方法"""
+        """Generate eval commands - dispatch to specific method"""
         if action == "set":
             return self._eval_set()
         else:  # unset
             return self._eval_unset()
 
     def echo(self, action: str) -> str:
-        """生成直接输出的内容 - dispatch 到具体方法"""
+        """Generate output content - dispatch to specific method"""
         if action == "set":
             return self._echo_set()
         else:  # unset
@@ -127,31 +127,31 @@ class Mode(ABC):
     # -------------------------------------------------------------------------
     @abstractmethod
     def _eval_set(self) -> str:
-        """eval set 的具体实现"""
+        """eval set implementation"""
         return ""
 
     @abstractmethod
     def _eval_unset(self) -> str:
-        """eval unset 的具体实现"""
+        """eval unset implementation"""
         return ""
 
     @abstractmethod
     def _echo_set(self) -> str:
-        """echo set 的具体实现"""
+        """echo set implementation"""
         return ""
 
     @abstractmethod
     def _echo_unset(self) -> str:
-        """echo unset 的具体实现"""
+        """echo unset implementation"""
         return ""
 
 
 class ShellMode(Mode):
-    """Shell 环境变量模式 - 同时设置小写和大写变量"""
+    """Shell environment variable mode - sets both lowercase and uppercase vars"""
     NAME = "shell"
     SUPPORTED_SCHEMES = {"http", "https", "socks5h"}
 
-    # 变量名映射: scheme -> (小写变量名, 大写变量名)
+    # Variable name mapping: scheme -> (lowercase, UPPERCASE)
     VAR_MAP = {
         "http": ("http_proxy", "HTTP_PROXY"),
         "https": ("https_proxy", "HTTPS_PROXY"),
@@ -180,20 +180,20 @@ class ShellMode(Mode):
         return "\n".join(lines)
 
     def _echo_set(self) -> str:
-        """echo set 输出与 eval set 相同，方便用户预览"""
+        """echo set outputs same as eval set for preview"""
         return self._eval_set()
 
     def _echo_unset(self) -> str:
-        """echo unset 输出与 eval unset 相同"""
+        """echo unset outputs same as eval unset"""
         return self._eval_unset()
 
 
 class NpmMode(ShellMode):
-    """NPM 环境变量模式 - 继承 ShellMode，只覆盖 VAR_MAP"""
+    """NPM environment variable mode - inherits ShellMode, only overrides VAR_MAP"""
     NAME = "npm"
     SUPPORTED_SCHEMES = {"http", "https"}
 
-    # 覆盖父类的 VAR_MAP (使用 tuple 单元素保持接口一致)
+    # Override parent's VAR_MAP (use single-element tuple for consistent interface)
     VAR_MAP = {
         "http": ("npm_config_proxy",),
         "https": ("npm_config_https_proxy",),
@@ -201,11 +201,11 @@ class NpmMode(ShellMode):
 
 
 class GradleMode(Mode):
-    """Gradle 配置模式"""
+    """Gradle configuration mode"""
     NAME = "gradle"
     SUPPORTED_SCHEMES = {"http", "https", "socks5h"}
 
-    # scheme 映射: 将 socks5h 映射为 gradle 使用的 "sock"
+    # Scheme mapping: maps socks5h to "sock" for gradle properties
     GRADLE_SCHEME_MAP = {
         "http": "http",
         "https": "https",
@@ -219,7 +219,7 @@ class GradleMode(Mode):
         return ""
 
     def _echo_set(self) -> str:
-        lines = ["# 将以下内容添加到 gradle.properties:"]
+        lines = ["# Add the following to gradle.properties:"]
         for proxy in self.active_proxies("set"):
             gradle_scheme = self.GRADLE_SCHEME_MAP.get(proxy.scheme, proxy.scheme)
             lines.append(f"systemProp.{gradle_scheme}.proxyHost={self.proxy_list.host}")
@@ -231,11 +231,11 @@ class GradleMode(Mode):
 
 
 class SystemdMode(Mode):
-    """Systemd 服务配置模式"""
+    """Systemd service configuration mode"""
     NAME = "systemd"
     SUPPORTED_SCHEMES = {"http", "https", "socks5h"}
 
-    # 变量名映射: scheme -> (小写变量名, 大写变量名)
+    # Variable name mapping: scheme -> (lowercase, UPPERCASE)
     VAR_MAP = {
         "http": ("http_proxy", "HTTP_PROXY"),
         "https": ("https_proxy", "HTTPS_PROXY"),
@@ -243,13 +243,13 @@ class SystemdMode(Mode):
     }
 
     def __init__(self, proxy_list: ProxyList, extra_args: list[str]):
-        # 先调用父类初始化
+        # Call parent init first
         super().__init__(proxy_list, extra_args)
 
     def _post_init(self):
-        """解析 service 和 mode"""
+        """Parse service and mode"""
         self.service = "docker.service"
-        self.mode = "system"  # system 或 user
+        self.mode = "system"  # system or user
 
         for arg in self.extra_args:
             if arg in ("system", "user"):
@@ -259,12 +259,12 @@ class SystemdMode(Mode):
 
     @classmethod
     def get_parser(cls) -> argparse.ArgumentParser:
-        """Systemd 特有参数解析器"""
+        """Systemd-specific argument parser"""
         parser = argparse.ArgumentParser(prog='px -m systemd', add_help=False)
         parser.add_argument("service", nargs="?", default="docker.service",
-                          help="服务名称 (默认: docker.service)")
+                          help="Service name (default: docker.service)")
         parser.add_argument("mode", nargs="?", choices=["system", "user"], default="system",
-                          help="systemd 模式: system 或 user (默认: system)")
+                          help="Systemd mode: system or user (default: system)")
         return parser
 
     def _eval_set(self) -> str:
@@ -321,7 +321,7 @@ MODES: dict[str, Type[Mode]] = {
 # =============================================================================
 
 def detect_wsl_ip() -> Optional[str]:
-    """检测 WSL2 宿主机 IP"""
+    """Detect WSL2 host IP"""
     try:
         r = subprocess.run(["wslinfo", "--networking-mode"], capture_output=True, text=True, timeout=2)
         if r.returncode == 0 and r.stdout.strip() == "mirrored":
@@ -349,35 +349,35 @@ def detect_wsl_ip() -> Optional[str]:
 # =============================================================================
 
 class HelpOnErrorParser(argparse.ArgumentParser):
-    """自定义 ArgumentParser，help 输出返回 exit 2 而不是 0"""
+    """Custom ArgumentParser that returns exit 2 for help instead of 0"""
     def print_help(self, file=None):
         super().print_help(file)
-        sys.exit(2)  # 使用非零 exit code，防止 shell 包装层 eval
+        sys.exit(2)  # Non-zero exit code prevents shell wrapper from eval
 
     def error(self, message):
-        # 错误时也输出 help 并 exit 2
+        # Also exit 2 on error
         self.print_usage(sys.stderr)
         self.exit(2, f'{self.prog}: error: {message}\n')
 
 
 def parse_mode_args(mode_class: Type[Mode], extra_args: list[str]) -> tuple[list[str], bool]:
     """
-    解析 mode 特有参数
+    Parse mode-specific arguments
     
-    返回: (解析后的参数列表, 是否显示了 help)
+    Returns: (parsed args list, whether help was shown)
     """
     parser = mode_class.get_parser()
     if parser is None:
         return extra_args, False
     
-    # 检查是否有 -h 或 --help
+    # Check for -h or --help
     if '-h' in extra_args or '--help' in extra_args:
         parser.print_help()
         return [], True
     
     try:
         args = parser.parse_args(extra_args)
-        # 将解析后的参数展平为列表
+        # Flatten parsed args to list
         result = []
         if hasattr(args, 'service'):
             result.append(args.service)
@@ -385,71 +385,71 @@ def parse_mode_args(mode_class: Type[Mode], extra_args: list[str]) -> tuple[list
             result.append(args.mode)
         return result, False
     except SystemExit:
-        # 解析失败，返回原始参数
+        # Parse failed, return original args
         return extra_args, False
 
 
 def main():
-    # 先只解析 mode，避免 -h 被立即处理
+    # First parse only mode, avoiding immediate -h handling
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("-m", "--mode", choices=list(MODES.keys()), default="shell")
     
-    # 分离出 mode 参数和剩余参数
+    # Separate mode args from remaining
     pre_args, remaining = pre_parser.parse_known_args()
     mode_class = MODES[pre_args.mode]
     
-    # 检查是否是 mode 特有 help
+    # Check if it's mode-specific help
     if '-h' in remaining or '--help' in remaining:
         mode_parser = mode_class.get_parser()
         if mode_parser:
-            # 显示 mode 特有 help
+            # Show mode-specific help
             mode_parser.print_help()
             sys.exit(2)
     
-    # 正常解析所有参数
-    parser = HelpOnErrorParser(description="代理环境变量设置工具")
-    parser.add_argument("cmd", choices=["eval", "echo"], help="子命令: eval 或 echo")
+    # Normal full argument parsing
+    parser = HelpOnErrorParser(description="Proxy environment variable tool")
+    parser.add_argument("cmd", choices=["eval", "echo"], help="Subcommand: eval or echo")
     parser.add_argument("-a", "--action", choices=["set", "unset"], required=True)
     parser.add_argument("-m", "--mode", choices=list(MODES.keys()), default="shell")
-    parser.add_argument("-i", "--ip", help="代理服务器 IP (未设置则自动检测)")
-    parser.add_argument("-p", "--port", default="7890", help="代理端口 (默认: 7890)")
+    parser.add_argument("-i", "--ip", help="Proxy server IP (auto-detect if not set)")
+    parser.add_argument("-p", "--port", default="7890", help="Proxy port (default: 7890)")
 
     args, extra = parser.parse_known_args()
     
-    # 获取选中的 mode 类（可能用户通过 -m 指定了不同的）
+    # Get selected mode class (user may have specified different one via -m)
     mode_class = MODES[args.mode]
     
-    # 如果 mode 有子参数解析器，解析其特有参数
+    # If mode has sub-parser, parse its specific args
     if mode_class.get_parser():
         extra, showed_help = parse_mode_args(mode_class, extra)
         if showed_help:
-            sys.exit(2)  # help 显示后退出，非零 exit code
+            sys.exit(2)  # Exit after showing help, non-zero code
 
-    # IP 未设置则自动检测
+    # Auto-detect IP if not set
     host = args.ip
     if not host:
         host = detect_wsl_ip()
         if not host:
-            print("# 警告: 无法检测 WSL IP，使用 localhost", file=sys.stderr)
+            print("# Warning: Cannot detect WSL IP, using localhost", file=sys.stderr)
             host = "localhost"
 
     if args.action == "set" and not host:
-        print("错误: 无法获取代理 IP", file=sys.stderr)
+        print("Error: Cannot get proxy IP", file=sys.stderr)
         sys.exit(1)
 
-    # 准备代理列表
+    # Prepare proxy list
     proxies = ProxyList(list(DEFAULT_PROXIES.proxies), host, args.port)
 
-    # 创建 Mode
+    # Create Mode
     mode = mode_class(proxies, extra)
 
-    # 执行子命令 - dispatch 在 Mode 基类中完成
+    # Execute subcommand - dispatch handled by Mode base class
     if args.cmd == "eval":
         output = mode.eval(args.action)
     else:  # echo
         output = mode.echo(args.action)
 
-    # 输出结果（可能是多行字符串）
+    # Output result (may be multi-line string)
     if output:
         print(output)
 

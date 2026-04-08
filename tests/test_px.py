@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-px 测试套件
+px test suite
 
-运行方式:
+Run:
     cd /path/to/px-project && python3 tests/test_px.py
 
-测试内容:
-    - Data Model 和 Modes
-    - CLI 接口
-    - Shell 包装层
+Tests:
+    - Data Models and Modes
+    - CLI interface
+    - Shell wrapper
 """
 
 import subprocess
@@ -20,7 +20,7 @@ import tempfile
 
 
 class TestCLI(unittest.TestCase):
-    """测试命令行接口"""
+    """Test command line interface"""
 
     @classmethod
     def setUpClass(cls):
@@ -29,17 +29,17 @@ class TestCLI(unittest.TestCase):
         cls.px_sh_path = cls.project_dir / "px.sh"
 
     def run_px(self, *args):
-        """运行 px 命令并返回结果"""
+        """Run px command and return result"""
         result = subprocess.run(
             ["python3", str(self.px_path), *args], capture_output=True, text=True
         )
         return result
 
     def test_eval_set(self):
-        """测试 eval set 命令 - 应该同时输出大小写变量"""
+        """Test eval set command - should output both lowercase and uppercase vars"""
         result = self.run_px("eval", "-a", "set")
         self.assertEqual(result.returncode, 0)
-        # 检查同时有小写和大写
+        # Check both lowercase and uppercase
         self.assertIn("export http_proxy=", result.stdout)
         self.assertIn("export HTTP_PROXY=", result.stdout)
         self.assertIn("export https_proxy=", result.stdout)
@@ -49,7 +49,7 @@ class TestCLI(unittest.TestCase):
         self.assertIn("localhost:7890", result.stdout)
 
     def test_eval_unset(self):
-        """测试 eval unset 命令 - 应该同时取消大小写变量"""
+        """Test eval unset command - should unset both lowercase and uppercase vars"""
         result = self.run_px("eval", "-a", "unset")
         self.assertEqual(result.returncode, 0)
         self.assertIn("unset http_proxy", result.stdout)
@@ -58,7 +58,7 @@ class TestCLI(unittest.TestCase):
         self.assertIn("unset HTTPS_PROXY", result.stdout)
 
     def test_echo_gradle(self):
-        """测试 echo gradle 模式"""
+        """Test echo gradle mode"""
         result = self.run_px("echo", "-a", "set", "-m", "gradle")
         self.assertEqual(result.returncode, 0)
         self.assertIn("gradle.properties", result.stdout)
@@ -66,34 +66,34 @@ class TestCLI(unittest.TestCase):
         self.assertIn("systemProp.https.proxyPort", result.stdout)
 
     def test_echo_npm(self):
-        """测试 echo npm 模式 - 继承 ShellMode，echo 与 eval 输出相同"""
+        """Test echo npm mode - inherits ShellMode, echo same as eval"""
         result = self.run_px("echo", "-a", "set", "-m", "npm")
         self.assertEqual(result.returncode, 0)
-        # NpmMode 继承 ShellMode，echo 输出与 eval 相同
+        # NpmMode inherits ShellMode, echo outputs same as eval
         self.assertIn("npm_config_proxy", result.stdout)
         self.assertIn("npm_config_https_proxy", result.stdout)
 
     def test_eval_npm(self):
-        """测试 eval npm 模式"""
+        """Test eval npm mode"""
         result = self.run_px("eval", "-a", "set", "-m", "npm")
         self.assertEqual(result.returncode, 0)
         self.assertIn("npm_config_proxy", result.stdout)
         self.assertIn("npm_config_https_proxy", result.stdout)
-        # npm 不设置大写变量
+        # npm doesn't set uppercase vars (single-element tuple)
         self.assertNotIn("NPM_CONFIG_PROXY", result.stdout)
 
     def test_echo_systemd_default(self):
-        """测试 echo systemd 默认模式"""
+        """Test echo systemd default mode"""
         result = self.run_px("echo", "-a", "set", "-m", "systemd")
         self.assertEqual(result.returncode, 0)
         self.assertIn("docker.service", result.stdout)
         self.assertIn("systemctl daemon-reload", result.stdout)
-        # 检查同时有小写和大写
+        # Check both lowercase and uppercase
         self.assertIn("http_proxy=", result.stdout)
         self.assertIn("HTTP_PROXY=", result.stdout)
 
     def test_echo_systemd_user(self):
-        """测试 echo systemd user 模式"""
+        """Test echo systemd user mode"""
         result = self.run_px("echo", "-a", "set", "-m", "systemd", "myapp", "user")
         self.assertEqual(result.returncode, 0)
         self.assertIn("myapp", result.stdout)
@@ -101,26 +101,26 @@ class TestCLI(unittest.TestCase):
         self.assertIn("[Service]", result.stdout)
 
     def test_echo_systemd_positional_args(self):
-        """测试 echo systemd 位置参数格式"""
+        """Test echo systemd positional args format"""
         result = self.run_px("echo", "-a", "set", "-m", "systemd", "myapp", "user")
         self.assertEqual(result.returncode, 0)
         self.assertIn("myapp", result.stdout)
         self.assertIn("[Service]", result.stdout)
 
     def test_manual_ip_port(self):
-        """测试手动指定 IP 和端口"""
+        """Test manual IP and port specification"""
         result = self.run_px("eval", "-a", "set", "-i", "192.168.1.100", "-p", "8080")
         self.assertEqual(result.returncode, 0)
         self.assertIn("http://192.168.1.100:8080", result.stdout)
 
     def test_unset_no_ip_required(self):
-        """测试 unset 不需要 IP"""
+        """Test unset doesn't require IP"""
         result = self.run_px("eval", "-a", "unset")
         self.assertEqual(result.returncode, 0)
 
 
 class TestShellWrapper(unittest.TestCase):
-    """测试 Shell 包装层"""
+    """Test shell wrapper"""
 
     @classmethod
     def setUpClass(cls):
@@ -128,19 +128,19 @@ class TestShellWrapper(unittest.TestCase):
         cls.px_sh_path = cls.project_dir / "px.sh"
 
     def test_wrapper_set_proxy(self):
-        """测试包装层设置代理 - 检查大小写变量"""
+        """Test wrapper set proxy - check both lowercase and uppercase vars"""
         px_file = self.project_dir / "px"
         script = f"""
 export PX_CMD={px_file}
 source {self.px_sh_path}
 
-# 清除现有代理
+# Clear existing proxies
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY 2>/dev/null
 
-# 测试设置代理
+# Test set proxy
 px
 
-# 检查同时设置了小写和大写变量
+# Check both lowercase and uppercase vars are set
 if [[ -z "$http_proxy" ]]; then
     echo "FAIL: http_proxy not set"
     exit 1
@@ -174,22 +174,22 @@ echo "SUCCESS"
             os.unlink(tmp_script)
 
     def test_wrapper_unset_proxy(self):
-        """测试包装层取消代理 - 检查同时取消大小写变量"""
+        """Test wrapper unset proxy - check both lowercase and uppercase vars are unset"""
         px_file = self.project_dir / "px"
         script = f"""
 export PX_CMD={px_file}
 source {self.px_sh_path}
 
-# 先设置代理（大小写都设置）
+# First set proxies (both cases)
 export http_proxy="http://test:7890"
 export HTTP_PROXY="http://test:7890"
 export https_proxy="http://test:7890"
 export HTTPS_PROXY="http://test:7890"
 
-# 测试取消代理
+# Test unset proxy
 unpx
 
-# 检查同时取消了大小写变量
+# Check both lowercase and uppercase vars are unset
 if [[ -n "$http_proxy" ]]; then
     echo "FAIL: http_proxy still set: $http_proxy"
     exit 1
@@ -223,25 +223,25 @@ echo "SUCCESS"
             os.unlink(tmp_script)
 
     def test_wrapper_gradle_mode(self):
-        """测试包装层 gradle 模式（直接输出，不 eval）"""
+        """Test wrapper gradle mode (display only, no eval)"""
         px_file = self.project_dir / "px"
         script = f"""
 export PX_CMD={px_file}
 source {self.px_sh_path}
 
-# 清除现有代理
+# Clear existing proxies
 unset http_proxy HTTP_PROXY 2>/dev/null
 
-# 测试 gradle 模式（应该只输出，不设置环境变量）
+# Test gradle mode (should only display, not set env vars)
 output=$(px -m gradle)
 
-# 检查输出内容
+# Check output content
 if [[ ! "$output" =~ "gradle.properties" ]]; then
     echo "FAIL: missing gradle.properties hint"
     exit 1
 fi
 
-# 检查没有设置 http_proxy
+# Check http_proxy is not set
 if [[ -n "$http_proxy" ]]; then
     echo "FAIL: http_proxy should not be set in gradle mode"
     exit 1
@@ -267,19 +267,19 @@ echo "SUCCESS"
             os.unlink(tmp_script)
 
     def test_wrapper_npm_mode(self):
-        """测试包装层 npm 模式"""
+        """Test wrapper npm mode"""
         px_file = self.project_dir / "px"
         script = f"""
 export PX_CMD={px_file}
 source {self.px_sh_path}
 
-# 清除现有变量
+# Clear existing vars
 unset npm_config_proxy npm_config_https_proxy 2>/dev/null
 
-# 测试 npm 模式
+# Test npm mode
 px -m npm
 
-# 检查是否设置了变量
+# Check vars are set
 if [[ -z "$npm_config_proxy" ]]; then
     echo "FAIL: npm_config_proxy not set"
     exit 1
@@ -305,10 +305,10 @@ echo "SUCCESS"
             os.unlink(tmp_script)
 
     def test_wrapper_exit_code_on_error(self):
-        """测试包装层在 px 失败时返回错误"""
+        """Test wrapper returns error when px fails"""
         px_file = self.project_dir / "px"
 
-        # 创建一个假的 px 脚本返回错误
+        # Create fake px script that returns error
         fake_px = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False)
         fake_px.write(
             "#!/usr/bin/env python3\nimport sys\nprint('error message')\nsys.exit(1)\n"
@@ -320,11 +320,11 @@ echo "SUCCESS"
 export PX_CMD={fake_px.name}
 source {self.px_sh_path}
 
-# 尝试执行（应该返回非零）
+# Try to execute (should return non-zero)
 px 2>/dev/null
 exit_code=$?
 
-# 检查 exit code
+# Check exit code
 if [[ $exit_code -ne 0 ]]; then
     echo "SUCCESS"
 else
