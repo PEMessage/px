@@ -276,8 +276,8 @@ class OpenaiMode(Mode):
         )
         return parser
 
-    def _get_api_key(self) -> str | None:
-        """Get API key from -t/--token/--password arguments"""
+    def _get_credential(self) -> str | None:
+        """Get API credential from --credential/-c argument"""
         if not self.args:
             return None
         return getattr(self.args, "credential", None)
@@ -305,10 +305,10 @@ class OpenaiMode(Mode):
             # Set API_BASE
             lines.append(f'export {base_var}="{api_base}"')
 
-            # Set API_KEY if provided
-            key = self._get_api_key()
-            if key:
-                lines.append(f'export {key_var}="{key}"')
+            # Set API_KEY if credential provided
+            credential = self._get_credential()
+            if credential:
+                lines.append(f'export {key_var}="{credential}"')
         return "\n".join(lines)
 
     def _eval_unset(self) -> str:
@@ -329,6 +329,16 @@ class OpenaiMode(Mode):
     def _echo_unset(self) -> str:
         """echo unset outputs same as eval unset"""
         return self._eval_unset()
+
+
+class AnthropicMode(OpenaiMode):
+    """Anthropic API configuration mode - inherits OpenaiMode, overrides VAR_MAP"""
+
+    NAME = "anthropic"
+    # Override parent's VAR_MAP for Anthropic-specific variables
+    VAR_MAP = {
+        "http": ("ANTHROPIC_API_BASE", "ANTHROPIC_API_KEY", "/v1"),
+    }
 
 
 class GradleMode(Mode):
@@ -488,7 +498,8 @@ class SystemdMode(Mode):
 # =============================================================================
 
 MODES: dict[str, Type[Mode]] = {
-    m.NAME: m for m in [ShellMode, GradleMode, NpmMode, SystemdMode, OpenaiMode]
+    m.NAME: m
+    for m in [ShellMode, GradleMode, NpmMode, SystemdMode, OpenaiMode, AnthropicMode]
 }
 
 
@@ -662,14 +673,12 @@ def main():
         default=None,
         help="Port (default: mode-specific, usually 7890)",
     )
-    # Credential arguments - all map to 'credential' attribute
+    # Credential argument - use --credential (or -c for short)
     parser.add_argument(
-        "-t",
-        "--token",
-        "--password",
-        dest="credential",
+        "-c",
+        "--credential",
         default=None,
-        help="API token, password, or key (all are the same, use whichever you prefer)",
+        help="API credential (token, password, or key)",
     )
     parser.add_argument("--key", default=None, help="API key (alternative to --token)")
 
