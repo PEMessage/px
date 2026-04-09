@@ -239,29 +239,55 @@ class OpenaiMode(ShellMode):
     NAME = "openai"
     SUPPORTED_SCHEMES = {"http"}  # OpenAI uses HTTP
     DEFAULT_PORT = "8137"  # Override default port for OpenAI mode
+    DEFAULT_ENDPOINT = "/v1"  # Default API endpoint path
 
     # Variable name mapping for OpenAI
     VAR_MAP = {
         "http": ("OPENAI_API_BASE", "OPENAI_API_KEY"),
     }
 
+    def _post_init(self):
+        """Initialize endpoint from args or use default"""
+        super()._post_init()
+        # Get endpoint from merged args, or use default
+        if self.args and hasattr(self.args, "endpoint") and self.args.endpoint:
+            self.endpoint = self.args.endpoint
+        else:
+            self.endpoint = self.DEFAULT_ENDPOINT
+
+    @classmethod
+    def get_parser(cls) -> "HelpOnErrorParser":
+        """OpenAI-specific argument parser with --endpoint option"""
+        parser = HelpOnErrorParser(prog="px -m openai", add_help=False)
+        parser.add_argument(
+            "--endpoint",
+            default=cls.DEFAULT_ENDPOINT,
+            help=f"API endpoint path (default: {cls.DEFAULT_ENDPOINT})",
+        )
+        return parser
+
     def _eval_set(self) -> str:
-        """Set OpenAI API environment variables"""
+        """Set OpenAI API environment variables with endpoint"""
         lines = []
         for template in self.active_templates("set"):
             var_names = self.VAR_MAP.get(template.scheme)
             if not var_names:
                 continue
 
-            # Build API base URL
-            api_base = template.full_url(
+            # Build API base URL with endpoint
+            base_url = template.full_url(
                 self.template_group.host, self.template_group.port
             )
+            # Ensure endpoint starts with / and append to base URL
+            endpoint = (
+                self.endpoint if self.endpoint.startswith("/") else "/" + self.endpoint
+            )
+            api_base = f"{base_url}{endpoint}"
 
             # Set OPENAI_API_BASE
             lines.append(f'export OPENAI_API_BASE="{api_base}"')
 
-            # Set OPENAI_API_KEY from --token/--password/--key/-t/-k if provided
+            # Set OPENAI_API_KEY from --token/--password if provided
             key = self._get_api_key()
             if key:
                 lines.append(f'export OPENAI_API_KEY="{key}"')
