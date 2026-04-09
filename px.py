@@ -76,7 +76,8 @@ class Mode(ABC):
         - _echo_set / _echo_unset: echo subcommand implementation
 
     Optional:
-        - get_parser(): returns sub-parser (for mode-specific args like service, mode)
+        - get_parser(): returns sub-parser (for mode-specific args)
+        - get_default_port(): returns default port for this mode
 
     Base class dispatch:
         - eval(action) -> calls _eval_set or _eval_unset
@@ -87,11 +88,31 @@ class Mode(ABC):
 
     NAME: str = ""
     SUPPORTED_SCHEMES: set[str] = set()
+    DEFAULT_PORT: str = "7890"  # Can be overridden by subclasses
 
-    def __init__(self, proxy_list: ProxyList, extra_args: list[str]):
+    def __init__(
+        self,
+        proxy_list: ProxyList,
+        extra_args: list[str],
+        args: argparse.Namespace | None = None,
+    ):
+        """
+        Initialize mode with proxy list, extra args, and optionally full parsed args
+
+        Args:
+            proxy_list: List of proxies with host/port configured
+            extra_args: Mode-specific extra arguments (parsed by mode's parser)
+            args: Full parsed arguments from main parser (optional, for accessing global options)
+        """
         self.proxy_list = proxy_list
         self.extra_args = extra_args
+        self.args = args  # Full args namespace
         self._post_init()
+
+    @classmethod
+    def get_default_port(cls) -> str:
+        """Return default port for this mode (can be overridden by subclasses)"""
+        return cls.DEFAULT_PORT
 
     def _post_init(self):
         """Subclasses can override this for initialization"""
@@ -209,6 +230,48 @@ class NpmMode(ShellMode):
     }
 
 
+class OpenaiMode(ShellMode):
+    """OpenAI API configuration mode - inherits ShellMode, sets OpenAI-specific variables"""
+
+    NAME = "openai"
+    SUPPORTED_SCHEMES = {"http"}  # OpenAI uses HTTP
+    DEFAULT_PORT = "8137"  # Override default port for OpenAI mode
+
+    # Variable name mapping for OpenAI
+    VAR_MAP = {
+        "http": ("OPENAI_API_BASE", "OPENAI_API_KEY"),
+    }
+
+    def _eval_set(self) -> str:
+        """Set OpenAI API environment variables"""
+        lines = []
+        for proxy in self.active_proxies("set"):
+            var_names = self.VAR_MAP.get(proxy.scheme)
+            if not var_names:
+                continue
+
+            # Build API base URL
+            api_base = proxy.full_url(self.proxy_list.host, self.proxy_list.port)
+
+            # Set OPENAI_API_BASE
+            lines.append(f'export OPENAI_API_BASE="{api_base}"')
+
+            # OPENAI_API_KEY should be already set by user, we just remind
+            # But if unset action, we unset it
+        return "\n".join(lines)
+
+    def _eval_unset(self) -> str:
+        """Unset OpenAI API environment variables"""
+        lines = []
+        for proxy in self.active_proxies("unset"):
+            var_names = self.VAR_MAP.get(proxy.scheme)
+            if not var_names:
+                continue
+            for var_name in var_names:
+                lines.append(f"unset {var_name}")
+        return "\n".join(lines)
+
+
 class GradleMode(Mode):
     """Gradle configuration mode"""
 
@@ -253,19 +316,27 @@ class SystemdMode(Mode):
         "socks5h": ("socks5h_proxy", "SOCKS5H_PROXY"),
     }
 
-    def __init__(self, proxy_list: ProxyList, extra_args: list[str]):
+    def __init__(
+        self,
+        proxy_list: ProxyList,
+        extra_args: list[str],
+        args: argparse.Namespace | None = None,
+    ):
         # Call parent init first
-        super().__init__(proxy_list, extra_args)
+        super().__init__(proxy_list, extra_args, args)
 
     def _post_init(self):
-        """Parse service and mode"""
+        """Parse service and mode from extra_args or mode-specific args"""
+        # Default values
         self.service = "docker.service"
         self.mode = "system"  # system or user
 
+        # First check if mode_args were parsed by parse_mode_args
+        # If args has service/mode attributes (from parse_known_args), use those
         for arg in self.extra_args:
             if arg in ("system", "user"):
                 self.mode = arg
-            else:
+            elif arg:  # Non-empty string that's not a reserved word
                 self.service = arg
 
     @classmethod
@@ -338,7 +409,7 @@ class SystemdMode(Mode):
 # =============================================================================
 
 MODES: dict[str, Type[Mode]] = {
-    m.NAME: m for m in [ShellMode, GradleMode, NpmMode, SystemdMode]
+    m.NAME: m for m in [ShellMode, GradleMode, NpmMode, SystemdMode, OpenaiMode]
 }
 
 
@@ -395,33 +466,48 @@ class HelpOnErrorParser(argparse.ArgumentParser):
 
 def parse_mode_args(
     mode_class: Type[Mode], extra_args: list[str]
-) -> tuple[list[str], bool]:
+) -> tuple[list[str], argparse.Namespace | None, bool]:
     """
     Parse mode-specific arguments
 
-    Returns: (parsed args list, whether help was shown)
+    Returns: (remaining_args, parsed_mode_args, whether_help_was_shown)
+
+    Uses parse_known_args to allow flexible argument handling.
+    Mode can define its own arguments which will be parsed and returned.
     """
     parser = mode_class.get_parser()
     if parser is None:
-        return extra_args, False
+        return extra_args, None, False
 
     # Check for -h or --help
     if "-h" in extra_args or "--help" in extra_args:
         parser.print_help()
-        return [], True
+        return [], None, True
 
     try:
-        args = parser.parse_args(extra_args)
-        # Flatten parsed args to list
-        result = []
-        if hasattr(args, "service"):
-            result.append(args.service)
-        if hasattr(args, "mode"):
-            result.append(args.mode)
-        return result, False
+        # Use parse_known_args to separate mode-specific args from remaining args
+        mode_args, remaining = parser.parse_known_args(extra_args)
+
+        # Convert mode_args Namespace to list for backward compatibility with _post_init
+        # Include both parsed mode-specific args and any remaining unknown args
+        result_list = []
+        for attr in dir(mode_args):
+            if not attr.startswith("_"):  # Skip private attributes
+                value = getattr(mode_args, attr)
+                if value is not None and value != parser.get_default(attr):
+                    # Only include non-default values
+                    if isinstance(value, list):
+                        result_list.extend(value)
+                    else:
+                        result_list.append(str(value))
+
+        # Append any remaining unknown args
+        result_list.extend(remaining)
+
+        return result_list, mode_args, False
     except SystemExit:
         # Parse failed, return original args
-        return extra_args, False
+        return extra_args, None, False
 
 
 # Alias map: short option -> expansion list
@@ -463,7 +549,10 @@ def main():
     parser.add_argument("-m", "--mode", choices=list(MODES.keys()), default="shell")
     parser.add_argument("-i", "--ip", help="Proxy server IP (auto-detect if not set)")
     parser.add_argument(
-        "-p", "--port", default="7890", help="Proxy port (default: 7890)"
+        "-p",
+        "--port",
+        default=None,
+        help="Proxy port (default: mode-specific, usually 7890)",
     )
 
     args, extra = parser.parse_known_args()
@@ -471,9 +560,16 @@ def main():
     # Get selected mode class (user may have specified different one via -m)
     mode_class = MODES[args.mode]
 
+    # Get default port from mode (allows modes to have different defaults like openai's 8137)
+    default_port = mode_class.get_default_port()
+
+    # Use mode-specific default port if user didn't specify
+    port = args.port if args.port else default_port
+
     # If mode has sub-parser, parse its specific args
+    mode_args = None
     if mode_class.get_parser():
-        extra, showed_help = parse_mode_args(mode_class, extra)
+        extra, mode_args, showed_help = parse_mode_args(mode_class, extra)
         if showed_help:
             sys.exit(2)  # Exit after showing help, non-zero code
 
@@ -490,10 +586,10 @@ def main():
         sys.exit(1)
 
     # Prepare proxy list
-    proxies = ProxyList(list(DEFAULT_PROXIES.proxies), host, args.port)
+    proxies = ProxyList(list(DEFAULT_PROXIES.proxies), host, port)
 
-    # Create Mode
-    mode = mode_class(proxies, extra)
+    # Create Mode with full args access
+    mode = mode_class(proxies, extra, args)
 
     # Execute subcommand - dispatch handled by Mode base class
     if args.cmd == "eval":
