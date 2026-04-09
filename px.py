@@ -234,15 +234,31 @@ class NpmMode(ShellMode):
 
 
 class OpenaiMode(Mode):
-    """OpenAI API configuration mode - standalone implementation with --endpoint support"""
+    """
+    OpenAI API configuration mode with VAR_MAP support for multiple providers.
+
+    VAR_MAP format: scheme -> (API_BASE_VAR, API_KEY_VAR, endpoint_path)
+    Example:
+        VAR_MAP = {
+            "http": ("OPENAI_API_BASE", "OPENAI_API_KEY", "/v1"),
+            "https": ("ANTHROPIC_API_BASE", "ANTHROPIC_API_KEY", "/v1"),
+        }
+    """
 
     NAME = "openai"
-    SUPPORTED_SCHEMES = {"http"}  # OpenAI uses HTTP
-    DEFAULT_PORT = "8137"  # Override default port for OpenAI mode
+    SUPPORTED_SCHEMES = {"http"}  # Only HTTP by default (can be extended)
+    DEFAULT_PORT = "8137"  # Override default port
     DEFAULT_ENDPOINT = "/v1"  # Default API endpoint path
 
+    # Variable mapping: scheme -> (BASE_VAR, KEY_VAR, default_endpoint)
+    # Can be extended to support other providers (Anthropic, Azure, etc.)
+    # Each scheme maps to a different provider config
+    VAR_MAP = {
+        "http": ("OPENAI_API_BASE", "OPENAI_API_KEY", "/v1"),
+    }
+
     def _post_init(self):
-        """Initialize endpoint from args or use default"""
+        """Initialize endpoint from args or use scheme default from VAR_MAP"""
         # Get endpoint from merged args, or use default
         if self.args and hasattr(self.args, "endpoint") and self.args.endpoint:
             self.endpoint = self.args.endpoint
@@ -260,15 +276,6 @@ class OpenaiMode(Mode):
         )
         return parser
 
-    def _build_api_base(self, template) -> str:
-        """Build full API base URL with endpoint"""
-        base_url = template.full_url(self.template_group.host, self.template_group.port)
-        # Ensure endpoint starts with / and append to base URL
-        endpoint = (
-            self.endpoint if self.endpoint.startswith("/") else "/" + self.endpoint
-        )
-        return f"{base_url}{endpoint}"
-
     def _get_api_key(self) -> str | None:
         """Get API key from -t/--token/--password arguments"""
         if not self.args:
@@ -276,24 +283,44 @@ class OpenaiMode(Mode):
         return getattr(self.args, "credential", None)
 
     def _eval_set(self) -> str:
-        """Set OpenAI API environment variables with endpoint"""
+        """Set API environment variables using VAR_MAP configuration"""
         lines = []
         for template in self.active_templates("set"):
-            # Build API base URL
-            api_base = self._build_api_base(template)
+            var_config = self.VAR_MAP.get(template.scheme)
+            if not var_config:
+                continue
 
-            # Set OPENAI_API_BASE
-            lines.append(f'export OPENAI_API_BASE="{api_base}"')
+            base_var, key_var, default_endpoint = var_config
 
-            # Set OPENAI_API_KEY if provided
+            # Build API base URL with endpoint
+            base_url = template.full_url(
+                self.template_group.host, self.template_group.port
+            )
+            # Use args endpoint if provided, otherwise use VAR_MAP default
+            endpoint = self.endpoint if self.endpoint else default_endpoint
+            if not endpoint.startswith("/"):
+                endpoint = "/" + endpoint
+            api_base = f"{base_url}{endpoint}"
+
+            # Set API_BASE
+            lines.append(f'export {base_var}="{api_base}"')
+
+            # Set API_KEY if provided
             key = self._get_api_key()
             if key:
-                lines.append(f'export OPENAI_API_KEY="{key}"')
+                lines.append(f'export {key_var}="{key}"')
         return "\n".join(lines)
 
     def _eval_unset(self) -> str:
-        """Unset OpenAI API environment variables"""
-        return "unset OPENAI_API_BASE OPENAI_API_KEY"
+        """Unset all API environment variables defined in VAR_MAP"""
+        lines = []
+        for template in self.active_templates("unset"):
+            var_config = self.VAR_MAP.get(template.scheme)
+            if not var_config:
+                continue
+            base_var, key_var, _ = var_config
+            lines.append(f"unset {base_var} {key_var}")
+        return "\n".join(lines) if lines else ""
 
     def _echo_set(self) -> str:
         """echo set outputs same as eval set for preview"""
