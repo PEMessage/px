@@ -233,22 +233,16 @@ class NpmMode(ShellMode):
     }
 
 
-class OpenaiMode(ShellMode):
-    """OpenAI API configuration mode - inherits ShellMode, sets OpenAI-specific variables"""
+class OpenaiMode(Mode):
+    """OpenAI API configuration mode - standalone implementation with --endpoint support"""
 
     NAME = "openai"
     SUPPORTED_SCHEMES = {"http"}  # OpenAI uses HTTP
     DEFAULT_PORT = "8137"  # Override default port for OpenAI mode
     DEFAULT_ENDPOINT = "/v1"  # Default API endpoint path
 
-    # Variable name mapping for OpenAI
-    VAR_MAP = {
-        "http": ("OPENAI_API_BASE", "OPENAI_API_KEY"),
-    }
-
     def _post_init(self):
         """Initialize endpoint from args or use default"""
-        super()._post_init()
         # Get endpoint from merged args, or use default
         if self.args and hasattr(self.args, "endpoint") and self.args.endpoint:
             self.endpoint = self.args.endpoint
@@ -266,28 +260,32 @@ class OpenaiMode(ShellMode):
         )
         return parser
 
+    def _build_api_base(self, template) -> str:
+        """Build full API base URL with endpoint"""
+        base_url = template.full_url(self.template_group.host, self.template_group.port)
+        # Ensure endpoint starts with / and append to base URL
+        endpoint = (
+            self.endpoint if self.endpoint.startswith("/") else "/" + self.endpoint
+        )
+        return f"{base_url}{endpoint}"
+
+    def _get_api_key(self) -> str | None:
+        """Get API key from -t/--token/--password arguments"""
+        if not self.args:
+            return None
+        return getattr(self.args, "credential", None)
+
     def _eval_set(self) -> str:
         """Set OpenAI API environment variables with endpoint"""
         lines = []
         for template in self.active_templates("set"):
-            var_names = self.VAR_MAP.get(template.scheme)
-            if not var_names:
-                continue
-
-            # Build API base URL with endpoint
-            base_url = template.full_url(
-                self.template_group.host, self.template_group.port
-            )
-            # Ensure endpoint starts with / and append to base URL
-            endpoint = (
-                self.endpoint if self.endpoint.startswith("/") else "/" + self.endpoint
-            )
-            api_base = f"{base_url}{endpoint}"
+            # Build API base URL
+            api_base = self._build_api_base(template)
 
             # Set OPENAI_API_BASE
             lines.append(f'export OPENAI_API_BASE="{api_base}"')
 
-            # Set OPENAI_API_KEY from --token/--password if provided
+            # Set OPENAI_API_KEY if provided
             key = self._get_api_key()
             if key:
                 lines.append(f'export OPENAI_API_KEY="{key}"')
@@ -295,20 +293,15 @@ class OpenaiMode(ShellMode):
 
     def _eval_unset(self) -> str:
         """Unset OpenAI API environment variables"""
-        lines = []
-        for template in self.active_templates("unset"):
-            var_names = self.VAR_MAP.get(template.scheme)
-            if not var_names:
-                continue
-            for var_name in var_names:
-                lines.append(f"unset {var_name}")
-        return "\n".join(lines)
+        return "unset OPENAI_API_BASE OPENAI_API_KEY"
 
-    def _get_api_key(self) -> str | None:
-        """Get API key from -t/--token/--password arguments"""
-        if not self.args:
-            return None
-        return getattr(self.args, "credential", None)
+    def _echo_set(self) -> str:
+        """echo set outputs same as eval set for preview"""
+        return self._eval_set()
+
+    def _echo_unset(self) -> str:
+        """echo unset outputs same as eval unset"""
+        return self._eval_unset()
 
 
 class GradleMode(Mode):
