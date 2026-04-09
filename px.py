@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-px - Proxy Environment Variable Tool
+px - Environment Variable Configuration Tool
 
 Architecture:
-    - Proxy: scheme and url_prefix only
+    - Template: scheme and url_prefix only
     - Each Mode manages its own variable name mapping
     - Base class dispatches set/unset to separate methods
     - Interface returns str (not list[str]), each Mode formats itself
     - Mode can have sub-parser (e.g., systemd service and mode)
+    - Supports --token/--password/--key/-t/-k for credential passing
 """
 
 from __future__ import annotations
@@ -26,8 +27,8 @@ from typing import Optional, Type
 
 
 @dataclass(frozen=True)
-class Proxy:
-    """Proxy configuration data model - only scheme and url_prefix"""
+class Template:
+    """Template configuration data model - scheme and url_prefix"""
 
     scheme: str  # http, https, socks5h
     url_prefix: str  # http://, socks5h://
@@ -37,27 +38,27 @@ class Proxy:
 
 
 @dataclass
-class ProxyList:
-    """Proxy list"""
+class TemplateGroup:
+    """Template group for managing multiple templates"""
 
-    proxies: list[Proxy]
+    templates: list[Template]
     host: str = ""
     port: str = ""
 
-    def active(self, action: str) -> list[Proxy]:
+    def active(self, action: str) -> list[Template]:
         if action == "unset":
-            return self.proxies
+            return self.templates
         if self.host and self.port:
-            return self.proxies
+            return self.templates
         return []
 
 
-# Default proxy definitions
-DEFAULT_PROXIES = ProxyList(
+# Default template definitions
+DEFAULT_TEMPLATES = TemplateGroup(
     [
-        Proxy("http", "http://"),
-        Proxy("https", "http://"),
-        Proxy("socks5h", "socks5h://"),
+        Template("http", "http://"),
+        Template("https", "http://"),
+        Template("socks5h", "socks5h://"),
     ]
 )
 
@@ -92,20 +93,20 @@ class Mode(ABC):
 
     def __init__(
         self,
-        proxy_list: ProxyList,
-        extra_args: list[str],
+        template_group: TemplateGroup,
+        unknown_args: list[str],
         args: argparse.Namespace | None = None,
     ):
         """
-        Initialize mode with proxy list, extra args, and optionally full parsed args
+        Initialize mode with template group, unknown args, and optionally full parsed args
 
         Args:
-            proxy_list: List of proxies with host/port configured
-            extra_args: Mode-specific extra arguments (parsed by mode's parser)
+            template_group: Group of templates with host/port configured
+            unknown_args: Mode-specific unknown arguments
             args: Full parsed arguments from main parser (optional, for accessing global options)
         """
-        self.proxy_list = proxy_list
-        self.extra_args = extra_args
+        self.template_group = template_group
+        self.unknown_args = unknown_args
         self.args = args  # Full args namespace
         self._post_init()
 
@@ -130,8 +131,10 @@ class Mode(ABC):
     def supports(self, scheme: str) -> bool:
         return scheme in self.SUPPORTED_SCHEMES
 
-    def active_proxies(self, action: str) -> list[Proxy]:
-        return [p for p in self.proxy_list.active(action) if self.supports(p.scheme)]
+    def active_templates(self, action: str) -> list[Template]:
+        return [
+            t for t in self.template_group.active(action) if self.supports(t.scheme)
+        ]
 
     # -------------------------------------------------------------------------
     # Dispatch methods
@@ -189,19 +192,19 @@ class ShellMode(Mode):
 
     def _eval_set(self) -> str:
         lines = []
-        for proxy in self.active_proxies("set"):
-            var_names = self.VAR_MAP.get(proxy.scheme)
+        for template in self.active_templates("set"):
+            var_names = self.VAR_MAP.get(template.scheme)
             if not var_names:
                 continue
-            url = proxy.full_url(self.proxy_list.host, self.proxy_list.port)
+            url = template.full_url(self.template_group.host, self.template_group.port)
             for var_name in var_names:
                 lines.append(f'export {var_name}="{url}"')
         return "\n".join(lines)
 
     def _eval_unset(self) -> str:
         lines = []
-        for proxy in self.active_proxies("unset"):
-            var_names = self.VAR_MAP.get(proxy.scheme)
+        for template in self.active_templates("unset"):
+            var_names = self.VAR_MAP.get(template.scheme)
             if not var_names:
                 continue
             for var_name in var_names:
@@ -245,31 +248,41 @@ class OpenaiMode(ShellMode):
     def _eval_set(self) -> str:
         """Set OpenAI API environment variables"""
         lines = []
-        for proxy in self.active_proxies("set"):
-            var_names = self.VAR_MAP.get(proxy.scheme)
+        for template in self.active_templates("set"):
+            var_names = self.VAR_MAP.get(template.scheme)
             if not var_names:
                 continue
 
             # Build API base URL
-            api_base = proxy.full_url(self.proxy_list.host, self.proxy_list.port)
+            api_base = template.full_url(
+                self.template_group.host, self.template_group.port
+            )
 
             # Set OPENAI_API_BASE
             lines.append(f'export OPENAI_API_BASE="{api_base}"')
 
-            # OPENAI_API_KEY should be already set by user, we just remind
-            # But if unset action, we unset it
+            # Set OPENAI_API_KEY from --token/--password/--key/-t/-k if provided
+            key = self._get_api_key()
+            if key:
+                lines.append(f'export OPENAI_API_KEY="{key}"')
         return "\n".join(lines)
 
     def _eval_unset(self) -> str:
         """Unset OpenAI API environment variables"""
         lines = []
-        for proxy in self.active_proxies("unset"):
-            var_names = self.VAR_MAP.get(proxy.scheme)
+        for template in self.active_templates("unset"):
+            var_names = self.VAR_MAP.get(template.scheme)
             if not var_names:
                 continue
             for var_name in var_names:
                 lines.append(f"unset {var_name}")
         return "\n".join(lines)
+
+    def _get_api_key(self) -> str | None:
+        """Get API key from -t/--token/--password arguments"""
+        if not self.args:
+            return None
+        return getattr(self.args, "credential", None)
 
 
 class GradleMode(Mode):
@@ -293,10 +306,14 @@ class GradleMode(Mode):
 
     def _echo_set(self) -> str:
         lines = ["# Add the following to gradle.properties:"]
-        for proxy in self.active_proxies("set"):
-            gradle_scheme = self.GRADLE_SCHEME_MAP.get(proxy.scheme, proxy.scheme)
-            lines.append(f"systemProp.{gradle_scheme}.proxyHost={self.proxy_list.host}")
-            lines.append(f"systemProp.{gradle_scheme}.proxyPort={self.proxy_list.port}")
+        for template in self.active_templates("set"):
+            gradle_scheme = self.GRADLE_SCHEME_MAP.get(template.scheme, template.scheme)
+            lines.append(
+                f"systemProp.{gradle_scheme}.proxyHost={self.template_group.host}"
+            )
+            lines.append(
+                f"systemProp.{gradle_scheme}.proxyPort={self.template_group.port}"
+            )
         return "\n".join(lines)
 
     def _echo_unset(self) -> str:
@@ -318,15 +335,15 @@ class SystemdMode(Mode):
 
     def __init__(
         self,
-        proxy_list: ProxyList,
-        extra_args: list[str],
+        template_group: TemplateGroup,
+        unknown_args: list[str],
         args: argparse.Namespace | None = None,
     ):
         # Call parent init first
-        super().__init__(proxy_list, extra_args, args)
+        super().__init__(template_group, unknown_args, args)
 
     def _post_init(self):
-        """Parse service and mode from extra_args or merged args"""
+        """Parse service and mode from unknown_args or merged args"""
         # Default values
         self.service = "docker.service"
         self.mode = "system"  # system or user
@@ -352,7 +369,7 @@ class SystemdMode(Mode):
             sys.exit(2)
 
     @classmethod
-    def get_parser(cls) -> HelpOnErrorParser:
+    def get_parser(cls) -> "HelpOnErrorParser":
         """Systemd-specific argument parser using HelpOnErrorParser"""
         parser = HelpOnErrorParser(prog="px -m systemd", add_help=False)
         parser.add_argument(
@@ -382,9 +399,11 @@ class SystemdMode(Mode):
             lines.append(f"sudo systemctl daemon-reload")
             lines.append(f"sudo systemctl restart {self.service}")
 
-            for proxy in self.active_proxies("set"):
-                url = proxy.full_url(self.proxy_list.host, self.proxy_list.port)
-                var_names = self.VAR_MAP.get(proxy.scheme, ())
+            for template in self.active_templates("set"):
+                url = template.full_url(
+                    self.template_group.host, self.template_group.port
+                )
+                var_names = self.VAR_MAP.get(template.scheme, ())
                 for var_name in var_names:
                     lines.append(
                         f"echo 'Environment=\"{var_name}={url}\"' | sudo tee -a /run/systemd/system/{self.service}.d/override.conf"
@@ -397,9 +416,11 @@ class SystemdMode(Mode):
             )
             lines.append("[Service]")
 
-            for proxy in self.active_proxies("set"):
-                url = proxy.full_url(self.proxy_list.host, self.proxy_list.port)
-                var_names = self.VAR_MAP.get(proxy.scheme, ())
+            for template in self.active_templates("set"):
+                url = template.full_url(
+                    self.template_group.host, self.template_group.port
+                )
+                var_names = self.VAR_MAP.get(template.scheme, ())
                 for var_name in var_names:
                     lines.append(f'Environment="{var_name}={url}"')
         return "\n".join(lines)
@@ -407,8 +428,8 @@ class SystemdMode(Mode):
     def _echo_unset(self) -> str:
         lines = []
         if self.mode == "system":
-            for proxy in self.active_proxies("unset"):
-                var_names = self.VAR_MAP.get(proxy.scheme, ())
+            for template in self.active_templates("unset"):
+                var_names = self.VAR_MAP.get(template.scheme, ())
                 for var_name in var_names:
                     lines.append(
                         f"sudo sed -i '/Environment=\"{var_name}=/d' /run/systemd/system/{self.service}.d/override.conf"
@@ -434,7 +455,10 @@ def detect_wsl_ip() -> Optional[str]:
     """Detect WSL2 host IP"""
     try:
         r = subprocess.run(
-            ["wslinfo", "--networking-mode"], capture_output=True, text=True, timeout=2
+            ["wslinfo", "--networking-mode"],
+            capture_output=True,
+            text=True,
+            timeout=2,
         )
         if r.returncode == 0 and r.stdout.strip() == "mirrored":
             return "localhost"
@@ -538,6 +562,7 @@ ALIAS_MAP = {
     "-g": ["--mode", "gradle"],
     "-n": ["--mode", "npm"],
     "-s": ["--mode", "systemd"],
+    "-o": ["--mode", "openai"],
 }
 
 
@@ -575,7 +600,7 @@ def main():
         f"  {alias} = {' '.join(expansion)}" for alias, expansion in ALIAS_MAP.items()
     )
     parser = HelpOnErrorParser(
-        description="Proxy environment variable tool",
+        description="Environment variable configuration tool",
         epilog=alias_help,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -584,13 +609,23 @@ def main():
     )
     parser.add_argument("-a", "--action", choices=["set", "unset"], required=True)
     parser.add_argument("-m", "--mode", choices=list(MODES.keys()), default="shell")
-    parser.add_argument("-i", "--ip", help="Proxy server IP (auto-detect if not set)")
+    parser.add_argument("-i", "--ip", help="Server IP (auto-detect if not set)")
     parser.add_argument(
         "-p",
         "--port",
         default=None,
-        help="Proxy port (default: mode-specific, usually 7890)",
+        help="Port (default: mode-specific, usually 7890)",
     )
+    # Credential arguments - all map to 'credential' attribute
+    parser.add_argument(
+        "-t",
+        "--token",
+        "--password",
+        dest="credential",
+        default=None,
+        help="API token, password, or key (all are the same, use whichever you prefer)",
+    )
+    parser.add_argument("--key", default=None, help="API key (alternative to --token)")
 
     args, unknown_args = parser.parse_known_args()
 
@@ -621,14 +656,14 @@ def main():
             host = "localhost"
 
     if args.action == "set" and not host:
-        print("Error: Cannot get proxy IP", file=sys.stderr)
+        print("Error: Cannot get server IP", file=sys.stderr)
         sys.exit(1)
 
-    # Prepare proxy list
-    proxies = ProxyList(list(DEFAULT_PROXIES.proxies), host, port)
+    # Prepare template group
+    templates = TemplateGroup(list(DEFAULT_TEMPLATES.templates), host, port)
 
     # Create Mode with full args access and any remaining unknown args
-    mode = mode_class(proxies, unknown_args, args)
+    mode = mode_class(templates, unknown_args, args)
 
     # Execute subcommand - dispatch handled by Mode base class
     if args.cmd == "eval":

@@ -48,5 +48,5 @@ _px() {
 }
 
 # Command definitions
-px()   { _px shell -a set "$@"; }
-unpx() { _px shell -a unset "$@"; }
+px()   { _px -a set "$@"; }
+unpx() { _px -a unset "$@"; }
