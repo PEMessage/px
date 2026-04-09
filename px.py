@@ -338,12 +338,18 @@ class SystemdMode(Mode):
             if hasattr(self.args, "mode") and self.args.mode:
                 self.mode = self.args.mode
 
-        # Also check extra_args for backward compatibility
-        for arg in self.extra_args:
-            if arg in ("system", "user"):
-                self.mode = arg
-            elif arg:  # Non-empty string that's not a reserved word
-                self.service = arg
+        # Validate service name - should not start with '-'
+        if self.service.startswith("-"):
+            print(f"Error: Invalid service name '{self.service}'", file=sys.stderr)
+            sys.exit(2)
+
+        # Validate mode
+        if self.mode not in ("system", "user"):
+            print(
+                f"Error: Invalid mode '{self.mode}', must be 'system' or 'user'",
+                file=sys.stderr,
+            )
+            sys.exit(2)
 
     @classmethod
     def get_parser(cls) -> HelpOnErrorParser:
@@ -483,23 +489,20 @@ def parse_mode_args(
     Returns: (mode_args_namespace, unknown_args)
 
     Uses parse_known_args to allow flexible argument handling.
-    Mode can define its own arguments which will be parsed and returned.
     Help is handled by HelpOnErrorParser (exit 2).
+    Errors cause immediate exit (2).
     """
     parser = mode_class.get_parser()
     if parser is None:
         # No parser for this mode, return empty namespace and original argv as unknown
         return argparse.Namespace(), argv
 
-    try:
-        # Use parse_known_args to separate mode-specific args from unknown args
-        # This mirrors argparse.parse_known_args interface
-        mode_args, unknown_args = parser.parse_known_args(argv)
+    # Use parse_known_args to separate mode-specific args from unknown args
+    # This mirrors argparse.parse_known_args interface
+    # Note: HelpOnErrorParser will exit(2) on errors or help, so this may not return
+    mode_args, unknown_args = parser.parse_known_args(argv)
 
-        return mode_args, unknown_args
-    except SystemExit:
-        # Parse failed or help was shown (HelpOnErrorParser exits with 2)
-        return argparse.Namespace(), argv
+    return mode_args, unknown_args
 
 
 def merge_args_with_mode_args(
