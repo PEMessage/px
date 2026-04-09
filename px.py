@@ -326,13 +326,19 @@ class SystemdMode(Mode):
         super().__init__(proxy_list, extra_args, args)
 
     def _post_init(self):
-        """Parse service and mode from extra_args or mode-specific args"""
+        """Parse service and mode from extra_args or merged args"""
         # Default values
         self.service = "docker.service"
         self.mode = "system"  # system or user
 
-        # First check if mode_args were parsed by parse_mode_args
-        # If args has service/mode attributes (from parse_known_args), use those
+        # Check if args (merged namespace) has service/mode set by parse_mode_args
+        if self.args:
+            if hasattr(self.args, "service") and self.args.service:
+                self.service = self.args.service
+            if hasattr(self.args, "mode") and self.args.mode:
+                self.mode = self.args.mode
+
+        # Also check extra_args for backward compatibility
         for arg in self.extra_args:
             if arg in ("system", "user"):
                 self.mode = arg
@@ -465,49 +471,67 @@ class HelpOnErrorParser(argparse.ArgumentParser):
 
 
 def parse_mode_args(
-    mode_class: Type[Mode], extra_args: list[str]
-) -> tuple[list[str], argparse.Namespace | None, bool]:
+    argv: list[str], mode_class: Type[Mode]
+) -> tuple[argparse.Namespace, list[str], bool]:
     """
-    Parse mode-specific arguments
+    Parse mode-specific arguments (similar to parse_known_args interface)
 
-    Returns: (remaining_args, parsed_mode_args, whether_help_was_shown)
+    Args:
+        argv: Argument list (like sys.argv)
+        mode_class: Mode class to get parser from
+
+    Returns: (mode_args_namespace, unknown_args, whether_help_was_shown)
 
     Uses parse_known_args to allow flexible argument handling.
     Mode can define its own arguments which will be parsed and returned.
     """
     parser = mode_class.get_parser()
     if parser is None:
-        return extra_args, None, False
+        # No parser for this mode, return empty namespace and original argv as unknown
+        return argparse.Namespace(), argv, False
 
     # Check for -h or --help
-    if "-h" in extra_args or "--help" in extra_args:
+    if "-h" in argv or "--help" in argv:
         parser.print_help()
-        return [], None, True
+        return argparse.Namespace(), [], True
 
     try:
-        # Use parse_known_args to separate mode-specific args from remaining args
-        mode_args, remaining = parser.parse_known_args(extra_args)
+        # Use parse_known_args to separate mode-specific args from unknown args
+        # This mirrors argparse.parse_known_args interface
+        mode_args, unknown_args = parser.parse_known_args(argv)
 
-        # Convert mode_args Namespace to list for backward compatibility with _post_init
-        # Include both parsed mode-specific args and any remaining unknown args
-        result_list = []
-        for attr in dir(mode_args):
-            if not attr.startswith("_"):  # Skip private attributes
-                value = getattr(mode_args, attr)
-                if value is not None and value != parser.get_default(attr):
-                    # Only include non-default values
-                    if isinstance(value, list):
-                        result_list.extend(value)
-                    else:
-                        result_list.append(str(value))
-
-        # Append any remaining unknown args
-        result_list.extend(remaining)
-
-        return result_list, mode_args, False
+        return mode_args, unknown_args, False
     except SystemExit:
-        # Parse failed, return original args
-        return extra_args, None, False
+        # Parse failed, return empty namespace and original argv
+        return argparse.Namespace(), argv, False
+
+
+def merge_args_with_mode_args(
+    args: argparse.Namespace, mode_args: argparse.Namespace | None
+) -> argparse.Namespace:
+    """
+    Merge main parser args with mode-specific args.
+    Mode args take precedence over main args for the same attribute.
+    """
+    if mode_args is None:
+        return args
+
+    # Create new namespace with merged values
+    merged = argparse.Namespace()
+
+    # Copy all attributes from main args
+    for attr in dir(args):
+        if not attr.startswith("_"):
+            setattr(merged, attr, getattr(args, attr))
+
+    # Override/add with mode-specific args
+    for attr in dir(mode_args):
+        if not attr.startswith("_"):
+            value = getattr(mode_args, attr)
+            if value is not None:
+                setattr(merged, attr, value)
+
+    return merged
 
 
 # Alias map: short option -> expansion list
@@ -555,7 +579,7 @@ def main():
         help="Proxy port (default: mode-specific, usually 7890)",
     )
 
-    args, extra = parser.parse_known_args()
+    args, unknown_args = parser.parse_known_args()
 
     # Get selected mode class (user may have specified different one via -m)
     mode_class = MODES[args.mode]
@@ -569,9 +593,12 @@ def main():
     # If mode has sub-parser, parse its specific args
     mode_args = None
     if mode_class.get_parser():
-        extra, mode_args, showed_help = parse_mode_args(mode_class, extra)
+        mode_args, unknown_args, showed_help = parse_mode_args(unknown_args, mode_class)
         if showed_help:
             sys.exit(2)  # Exit after showing help, non-zero code
+
+        # Merge mode args with main args
+        args = merge_args_with_mode_args(args, mode_args)
 
     # Auto-detect IP if not set
     host = args.ip
@@ -588,8 +615,8 @@ def main():
     # Prepare proxy list
     proxies = ProxyList(list(DEFAULT_PROXIES.proxies), host, port)
 
-    # Create Mode with full args access
-    mode = mode_class(proxies, extra, args)
+    # Create Mode with full args access and any remaining unknown args
+    mode = mode_class(proxies, unknown_args, args)
 
     # Execute subcommand - dispatch handled by Mode base class
     if args.cmd == "eval":
