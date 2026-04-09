@@ -578,6 +578,11 @@ def main():
     parser.add_argument(
         "-c",
         "--credential",
+        "-k",
+        "--key",
+        "-t",
+        "--token",
+        dest="credential",
         default=None,
         help="API credential (token, password, or key)",
     )
