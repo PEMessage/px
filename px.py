@@ -103,8 +103,8 @@ class ProxyMode(Mode):
 
     SUPPORTED_SCHEMES: set[str] = set()
 
-    def __init__(self, proxies: ProxyList, args: argparse.Namespace):
-        self.proxies = proxies
+    def __init__(self, args: argparse.Namespace):
+        self.proxies = DEFAULT_PROXIES
         super().__init__(args)
 
     def supports(self, scheme: str) -> bool:
@@ -576,10 +576,7 @@ def main():
         help="Host as 'ip:port' or 'ip' (sets both IP and port, e.g., localhost:8080)",
     )
     parser.add_argument(
-        "-k",
-        "--key",
-        "-t",
-        "--token",
+        "-c",
         "--credential",
         default=None,
         help="API credential (token, password, or key)",
@@ -600,7 +597,7 @@ def main():
         print("Error: Cannot get server IP", file=sys.stderr)
         sys.exit(1)
 
-    mode = mode_class(DEFAULT_PROXIES, args)
+    mode = mode_class(args)
 
     if args.cmd == "eval":
         output = mode.eval(args.action)
