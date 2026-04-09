@@ -346,9 +346,9 @@ class SystemdMode(Mode):
                 self.service = arg
 
     @classmethod
-    def get_parser(cls) -> argparse.ArgumentParser:
-        """Systemd-specific argument parser"""
-        parser = argparse.ArgumentParser(prog="px -m systemd", add_help=False)
+    def get_parser(cls) -> HelpOnErrorParser:
+        """Systemd-specific argument parser using HelpOnErrorParser"""
+        parser = HelpOnErrorParser(prog="px -m systemd", add_help=False)
         parser.add_argument(
             "service",
             nargs="?",
@@ -471,39 +471,35 @@ class HelpOnErrorParser(argparse.ArgumentParser):
 
 
 def parse_mode_args(
-    argv: list[str], mode_class: Type[Mode]
-) -> tuple[argparse.Namespace, list[str], bool]:
+    mode_class: Type[Mode], argv: list[str]
+) -> tuple[argparse.Namespace, list[str]]:
     """
     Parse mode-specific arguments (similar to parse_known_args interface)
 
     Args:
-        argv: Argument list (like sys.argv)
         mode_class: Mode class to get parser from
+        argv: Argument list (like sys.argv)
 
-    Returns: (mode_args_namespace, unknown_args, whether_help_was_shown)
+    Returns: (mode_args_namespace, unknown_args)
 
     Uses parse_known_args to allow flexible argument handling.
     Mode can define its own arguments which will be parsed and returned.
+    Help is handled by HelpOnErrorParser (exit 2).
     """
     parser = mode_class.get_parser()
     if parser is None:
         # No parser for this mode, return empty namespace and original argv as unknown
-        return argparse.Namespace(), argv, False
-
-    # Check for -h or --help
-    if "-h" in argv or "--help" in argv:
-        parser.print_help()
-        return argparse.Namespace(), [], True
+        return argparse.Namespace(), argv
 
     try:
         # Use parse_known_args to separate mode-specific args from unknown args
         # This mirrors argparse.parse_known_args interface
         mode_args, unknown_args = parser.parse_known_args(argv)
 
-        return mode_args, unknown_args, False
+        return mode_args, unknown_args
     except SystemExit:
-        # Parse failed, return empty namespace and original argv
-        return argparse.Namespace(), argv, False
+        # Parse failed or help was shown (HelpOnErrorParser exits with 2)
+        return argparse.Namespace(), argv
 
 
 def merge_args_with_mode_args(
@@ -557,6 +553,20 @@ def main():
     # Expand aliases before parsing
     sys.argv = expand_aliases(sys.argv)
 
+    # Pre-parse to extract mode (needed for mode-specific help handling)
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("-m", "--mode", choices=list(MODES.keys()), default="shell")
+    pre_args, remaining = pre_parser.parse_known_args()
+    mode_class = MODES[pre_args.mode]
+
+    # Check for mode-specific help before main parsing
+    if "-h" in remaining or "--help" in remaining:
+        mode_parser = mode_class.get_parser()
+        if mode_parser:
+            # Show mode-specific help and exit with 2
+            mode_parser.print_help()
+            sys.exit(2)
+
     # Normal full argument parsing
     alias_help = "aliases:\n" + "\n".join(
         f"  {alias} = {' '.join(expansion)}" for alias, expansion in ALIAS_MAP.items()
@@ -593,9 +603,8 @@ def main():
     # If mode has sub-parser, parse its specific args
     mode_args = None
     if mode_class.get_parser():
-        mode_args, unknown_args, showed_help = parse_mode_args(unknown_args, mode_class)
-        if showed_help:
-            sys.exit(2)  # Exit after showing help, non-zero code
+        mode_args, unknown_args = parse_mode_args(mode_class, unknown_args)
+        # Note: HelpOnErrorParser handles -h/--help by printing and exiting with 2
 
         # Merge mode args with main args
         args = merge_args_with_mode_args(args, mode_args)
