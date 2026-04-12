@@ -518,7 +518,7 @@ ALIAS_MAP = {
     "-n": ["--mode", "npm"],
     "-s": ["--mode", "systemd"],
     "-o": ["--mode", "openai"],
-    "-a": ["--mode", "anthropic"],
+    "--ant": ["--mode", "anthropic"],
 }
 
 
