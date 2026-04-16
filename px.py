@@ -171,16 +171,50 @@ class NpmMode(ShellMode):
     }
 
 
-class OpenaiMode(ProxyMode):
+def should_use_http(host: str) -> bool:
+    """
+    Determine if HTTP should be used based on host.
+    Returns True for localhost, 127.0.0.1, and IP addresses.
+    Returns False for domain names (use HTTPS).
+    """
+    if not host:
+        return True
+
+    host_lower = host.lower()
+
+    # localhost variations
+    if host_lower in ("localhost", "127.0.0.1", "::1"):
+        return True
+
+    # Check for IP address patterns (IPv4 and IPv6)
+    import re
+
+    # IPv4 pattern
+    ipv4_pattern = r"^(\d{1,3}\.){3}\d{1,3}$"
+    if re.match(ipv4_pattern, host):
+        return True
+
+    # IPv6 pattern (basic check)
+    if ":" in host and host != "::1":
+        # Check if it's an IPv6 address
+        ipv6_pattern = r"^[0-9a-fA-F:]+$"
+        if re.match(ipv6_pattern, host):
+            return True
+
+    # For domain names, use HTTPS
+    return False
+
+
+class OpenaiMode(Mode):
     """OpenAI API configuration mode with VAR_MAP support for multiple providers."""
 
     NAME = "openai"
-    SUPPORTED_SCHEMES = {"http"}
     DEFAULT_PORT = "8137"
     DEFAULT_ENDPOINT = "/v1"
 
     VAR_MAP = {
         "http": ("OPENAI_API_BASE", "OPENAI_API_KEY", "/v1"),
+        "https": ("OPENAI_API_BASE", "OPENAI_API_KEY", "/v1"),
     }
 
     def _post_init(self):
@@ -196,39 +230,62 @@ class OpenaiMode(ProxyMode):
             default=cls.DEFAULT_ENDPOINT,
             help=f"API endpoint path (default: {cls.DEFAULT_ENDPOINT})",
         )
+        parser.add_argument(
+            "--protocol",
+            choices=["http", "https"],
+            default=None,
+            help="Protocol to use: http or https (default: auto-detect based on host)",
+        )
         return parser
 
     def _get_credential(self) -> str | None:
         return getattr(self.args, "credential", None)
 
+    def _get_protocol(self) -> str:
+        """Determine protocol: manual override > smart detection."""
+        # Manual override
+        manual_protocol = getattr(self.args, "protocol", None)
+        if manual_protocol:
+            return manual_protocol
+
+        # Smart detection
+        return "http" if should_use_http(self.args.host) else "https"
+
+    def _build_base_url(self) -> str:
+        """Build the base URL with the determined protocol."""
+        protocol = self._get_protocol()
+        port_suffix = f":{self.args.port}" if self.args.port else ""
+        return f"{protocol}://{self.args.host}{port_suffix}"
+
     def _eval_set(self) -> str:
         lines = []
-        for proxy in self.get_proxies():
-            var_config = self.VAR_MAP.get(proxy.scheme)
-            if not var_config:
-                continue
-            base_var, key_var, default_endpoint = var_config
+        protocol = self._get_protocol()
+        var_config = self.VAR_MAP.get(protocol)
+        if not var_config:
+            return ""
 
-            base_url = proxy.full_url(self.args.host, self.args.port)
-            endpoint = self.endpoint if self.endpoint else default_endpoint
-            if not endpoint.startswith("/"):
-                endpoint = "/" + endpoint
-            api_base = f"{base_url}{endpoint}"
+        base_var, key_var, default_endpoint = var_config
 
-            lines.append(f'export {base_var}="{api_base}"')
-            credential = self._get_credential()
-            if credential:
-                lines.append(f'export {key_var}="{credential}"')
+        base_url = self._build_base_url()
+        endpoint = self.endpoint if self.endpoint else default_endpoint
+        if not endpoint.startswith("/"):
+            endpoint = "/" + endpoint
+        api_base = f"{base_url}{endpoint}"
+
+        lines.append(f'export {base_var}="{api_base}"')
+        credential = self._get_credential()
+        if credential:
+            lines.append(f'export {key_var}="{credential}"')
         return "\n".join(lines)
 
     def _eval_unset(self) -> str:
         lines = []
-        for proxy in self.get_proxies():
-            var_config = self.VAR_MAP.get(proxy.scheme)
-            if not var_config:
-                continue
-            base_var, key_var, _ = var_config
-            lines.append(f"unset {base_var} {key_var}")
+        # Unset both http and https vars to be thorough
+        for protocol in ("http", "https"):
+            var_config = self.VAR_MAP.get(protocol)
+            if var_config:
+                base_var, key_var, _ = var_config
+                lines.append(f"unset {base_var} {key_var}")
         return "\n".join(lines) if lines else ""
 
     def _echo_set(self) -> str:
@@ -246,6 +303,7 @@ class AnthropicMode(OpenaiMode):
 
     VAR_MAP = {
         "http": ("ANTHROPIC_API_BASE", "ANTHROPIC_API_KEY", "/v1"),
+        "https": ("ANTHROPIC_API_BASE", "ANTHROPIC_API_KEY", "/v1"),
     }
 
 
