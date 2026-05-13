@@ -306,18 +306,31 @@ class AnthropicMode(OpenaiMode):
         "https": ("ANTHROPIC_API_BASE", "ANTHROPIC_API_KEY", "/v1"),
     }
 
+class OpenaiCompatiableMode(OpenaiMode):
+    """Anthropic API configuration mode - inherits OpenaiMode, overrides VAR_MAP."""
+
+    NAME = "openai-compatiable"
+
+    VAR_MAP = {
+        "http": ("OPENAI_COMPATIBLE_BASE_URL", "OPENAI_COMPATIBLE_API_KEY", "/v1"),
+    }
 
 class GradleMode(ProxyMode):
     """Gradle configuration mode."""
 
     NAME = "gradle"
     SUPPORTED_SCHEMES = {"http", "https", "socks5h"}
+    DEFAULT_PORT = "7890"
 
     GRADLE_SCHEME_MAP = {
         "http": "http",
         "https": "https",
         "socks5h": "sock",
     }
+
+    def _post_init(self):
+        if self.args.port == "default":
+            self.args.port = self.DEFAULT_PORT
 
     def _eval_set(self) -> str:
         return ""
@@ -438,7 +451,7 @@ class SystemdMode(ProxyMode):
 
 MODES: dict[str, Type[Mode]] = {
     m.NAME: m
-    for m in [ShellMode, GradleMode, NpmMode, SystemdMode, OpenaiMode, AnthropicMode]
+    for m in [ShellMode, GradleMode, NpmMode, SystemdMode, OpenaiMode, AnthropicMode, OpenaiCompatiableMode]
 }
 
 
@@ -576,6 +589,7 @@ ALIAS_MAP = {
     "-n": ["--mode", "npm"],
     "-s": ["--mode", "systemd"],
     "-o": ["--mode", "openai"],
+    "-oc": ["--mode", "openai-compatiable"],
     "--ant": ["--mode", "anthropic"],
 }
 
